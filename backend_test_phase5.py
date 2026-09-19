@@ -10,7 +10,7 @@ import base64
 from typing import Dict, Any, Tuple
 
 # Backend URL
-BASE_URL = "https://mobile-chat-app-103.preview.emergentagent.com/api"
+BASE_URL = "https://chatly-app-3.preview.emergentagent.com/api"
 
 # Test credentials
 DEMO_EMAIL = "demo@chatly.app"
