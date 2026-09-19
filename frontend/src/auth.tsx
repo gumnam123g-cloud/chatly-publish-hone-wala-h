@@ -6,6 +6,7 @@ import { storage } from "@/src/utils/storage";
 import { api, TOKEN_KEY } from "@/src/api";
 import { signInFirebaseWithCustomToken, signOutFirebase } from "@/src/firebase";
 import { registerPushToken, unregisterPushToken } from "@/src/notifications";
+import { track, flushAnalytics } from "@/src/analytics";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -79,6 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     sentSessions.add(sessionId);
     const res = await api.post<{ token: string; user: User }>("/auth/session", { session_id: sessionId }, false);
     await persistSession(res.token, res.user);
+    try { track("google_sign_in"); track("login", { method: "google" }); } catch {}
   }, []);
 
   useEffect(() => {
@@ -165,15 +167,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const res = await api.post<{ token: string; user: User }>("/auth/login", { email, password }, false);
     await persistSession(res.token, res.user);
+    try { track("login", { method: "email" }); } catch {}
   }, []);
 
   const signup = useCallback(async (name: string, email: string, password: string) => {
     await api.post("/auth/signup", { name, email, password }, false);
+    try { track("sign_up", { method: "email" }); } catch {}
   }, []);
 
   const verifyOtp = useCallback(async (email: string, code: string) => {
     const res = await api.post<{ token: string; user: User }>("/auth/verify-otp", { email, code }, false);
     await persistSession(res.token, res.user);
+    try { track("login", { method: "otp" }); } catch {}
   }, []);
 
   const resendOtp = useCallback(async (email: string) => {
@@ -189,6 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    try { track("logout"); await flushAnalytics(); } catch {}
     try { await unregisterPushToken(pushTokenRef.current); } catch {}
     try { await signOutFirebase(); } catch {}
     pushTokenRef.current = null;

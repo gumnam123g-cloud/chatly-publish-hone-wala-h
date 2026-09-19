@@ -332,14 +332,79 @@ metadata:
 
 test_plan:
   current_focus:
-    - "AUTH ROOT-CAUSE FIX: corrected EMERGENT_EMAIL_KEY (was invalid sk-emergent LLM key -> now ek_ provisioned key). Verify full auth end-to-end."
-    - "Signup -> OTP email sent -> verify-otp -> token; duplicate verified email -> 409 'An account with this email already exists.'"
-    - "Login: valid -> token; wrong -> 401 'Incorrect email or password.'; unverified -> 403 'Please verify your email first.' + new code issued"
-    - "Forgot -> reset code emailed -> reset-password -> login with new password; OTP expiry/single-use/cooldown(429)/max-attempts(429)"
+    - "MILESTONE A DELIVERED: Status 24h expiry restored; in-app image/video/PDF viewers; feedback + analytics endpoints; Share Chatly; AI action modal fix. Backend tested (curl). Frontend needs UI regression + AI-action E2E in a chat."
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
   run_ui: false
+
+milestone_a_phase1_partial:
+  - task: "Status expiry restored to 24h (server-side created_at filter + expires_at=now+24h)"
+    implemented: true
+    working: true
+    file: "backend/status_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Reverted Phase 10 permanence. _active_statuses filters `created_at >= now-24h`; both POST /status and POST /status/video now set `expires_at = created_at + 24h`. Verified via curl (new text status expires_at 2026-09-20 17:01, exactly +24h)."
+  - task: "In-app media viewers (image zoom/pan, video with native controls, PDF via in-app Custom Tabs)"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/viewer/image.tsx, frontend/app/viewer/video.tsx, frontend/app/viewer/pdf.tsx, frontend/src/mediaCache.ts, frontend/app/chat/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New viewer routes with disk-cache (ensureCached via expo-file-system) so previously-viewed media works offline. chat/[id].tsx openFile now routes image/video/PDF/DOC/PPT/XLS/TXT/MD/CSV to the correct viewer — no more punts to external browser. Image viewer uses pinch+pan+double-tap-reset via gesture-handler+reanimated. Video viewer uses expo-video native controls. PDF viewer opens Google Docs viewer inside expo-web-browser Custom Tabs and falls back to Sharing.shareAsync for offline files. Manual UI regression + open-image/open-video/open-pdf E2E pending."
+  - task: "AI message action nested-modal race fix + friendly failure states"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/chat/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Set aiResult title *before* awaiting the API so the outer message-action modal always shows a loading state as soon as the language modal closes (avoids the previous 'nothing happens' bug on Android nested Modals). Empty response ('') now shows 'No response received. Please try again.' instead of a blank body. Errors show 'Couldn't get a response' with the safe api.ts message (no stack traces). Same treatment applied to chat-brain (summary/important/decisions). Backend curl confirmed the endpoint returns Devanagari for Hindi and English for English."
+  - task: "Share Chatly (native Android share sheet)"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(tabs)/profile.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Profile > 'Share Chatly' row opens React Native's native Share dialog with a short pitch. Fires `share_app` analytics event."
+  - task: "Send Feedback (screen + backend POST /api/feedback, GET /api/feedback/mine)"
+    implemented: true
+    working: true
+    file: "frontend/app/feedback.tsx, backend/feedback_routes.py, backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "POST /api/feedback validated (auth required, message 3-4000 chars, category enum, app_version/platform/device fields). Backend curl returns {status:'received', id:...}. Feedback screen has category chips + counter + submit toast + graceful error toast. Verified via curl."
+  - task: "Backend analytics event log (POST /api/analytics/event) + batched client emitter"
+    implemented: true
+    working: true
+    file: "backend/feedback_routes.py, frontend/src/analytics.ts"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Server has an explicit ALLOWED_EVENTS allow-list (no free-form events accepted). Props are sanitized: only ints/floats/bools/nullable/short strings survive, values truncated to 120 chars; blocks any accidental large blob send. Client batches events every 5s or when 20 accumulate; requeues on network failure up to 200 events. Events emitted so far: app_open, sign_up, login (email/otp/google), google_sign_in, logout, message_sent, ai_action_started/completed/failed, share_app, feedback_submitted, media_viewed_image/video/pdf. Verified via curl: {accepted:2, rejected:0} for two events."
 
 auth_email_key_rootcause_fix:
   - task: "Auth system fully broken ('Something went wrong on our end') — root cause invalid EMERGENT_EMAIL_KEY"

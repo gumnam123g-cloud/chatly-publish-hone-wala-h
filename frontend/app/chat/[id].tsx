@@ -16,6 +16,7 @@ import { useAuth } from "@/src/auth";
 import { useWs } from "@/src/ws";
 import { useCall } from "@/src/calls";
 import { fileUrl, pickImageFromLibrary, captureImage, pickDocument, uploadImage, uploadDocument, uploadVoice } from "@/src/upload";
+import { track } from "@/src/analytics";
 import { CHAT_THEME_PRESETS, ACCENTS, resolveChatTheme, type ChatTheme } from "@/src/chatThemes";
 import dayjs from "dayjs";
 
@@ -232,6 +233,7 @@ export default function ChatScreen() {
     try {
       const res = await api.post<{ message: Msg }>(`/chats/${id}/messages`, { text: body });
       setMessages((p) => p.map((m) => m.message_id === optimistic.message_id ? res.message : m));
+      try { track("message_sent", { chat_id: String(id), chars: body.length }); } catch {}
     } catch {
       setMessages((p) => p.map((m) => m.message_id === optimistic.message_id ? { ...m, status: "failed" } : m));
       toast.show("Failed to send", "error");
@@ -267,17 +269,28 @@ export default function ChatScreen() {
   const runMsgAction = async (action: string, lang?: string, tone?: string) => {
     if (!selected) return;
     setLangSheet(null);
-    setAiLoading(true); setAiResult({ title: "Chatly", body: "" });
+    setAiLoading(true);
+    const titles: any = { explain: "Explanation", summarize: "Summary", translate: "Translation", reply: "Suggested Reply" };
+    setAiResult({ title: titles[action] || "Chatly", body: "" });
+    track("ai_action_started", { action, lang: lang || "" });
     try {
       const payload: any = { text: selected.text, action };
       if (action === "translate") payload.target_lang = lang || "English";
       else if (["summarize", "explain", "reply"].includes(action) && lang) payload.out_lang = lang;
       if (action === "reply") { payload.tone = tone || aiTone; payload.context = messages.slice(-8).map((m) => `${m.sender_id === user?.user_id ? "Me" : "Them"}: ${m.text}`).join("\n"); }
       const res = await api.post<{ result: string }>("/ai/message-action", payload);
-      const titles: any = { explain: "Explanation", summarize: "Summary", translate: "Translation", reply: "Suggested Reply" };
-      setAiResult({ title: titles[action] || "Chatly", body: res.result, canReply: action === "reply" });
-    } catch (e: any) { setAiResult({ title: "Error", body: e.message }); }
-    finally { setAiLoading(false); }
+      const body = (res?.result || "").trim();
+      if (!body) {
+        setAiResult({ title: titles[action] || "Chatly", body: "No response received. Please try again.", canReply: false });
+        track("ai_action_failed", { action, reason: "empty" });
+      } else {
+        setAiResult({ title: titles[action] || "Chatly", body, canReply: action === "reply" });
+        track("ai_action_completed", { action, chars: body.length });
+      }
+    } catch (e: any) {
+      setAiResult({ title: "Couldn't get a response", body: e?.message || "Please check your connection and try again." });
+      track("ai_action_failed", { action, reason: "error" });
+    } finally { setAiLoading(false); }
   };
 
   const startBrain = (kind: string) => {
@@ -287,13 +300,24 @@ export default function ChatScreen() {
 
   const runBrain = async (kind: string, lang?: string) => {
     setLangSheet(null);
-    setAiLoading(true); setAiResult({ title: "Chatly", body: "" });
+    setAiLoading(true);
+    const t: any = { summary: "Summary", important: "Important Messages", timeline: "Timeline", pending: "Pending Replies", decisions: "Decisions" };
+    setAiResult({ title: t[kind] || "Chatly", body: "" });
+    track("ai_action_started", { action: "brain_" + kind, lang: lang || "" });
     try {
       const res = await api.post<{ result: string }>("/ai/chat-brain", { chat_id: id, kind, out_lang: lang || undefined });
-      const t: any = { summary: "Summary", important: "Important Messages", timeline: "Timeline", pending: "Pending Replies", decisions: "Decisions" };
-      setAiResult({ title: t[kind] || "Chatly", body: res.result });
-    } catch (e: any) { setAiResult({ title: "Error", body: e.message }); }
-    finally { setAiLoading(false); }
+      const body = (res?.result || "").trim();
+      if (!body) {
+        setAiResult({ title: t[kind] || "Chatly", body: "No response received. Please try again." });
+        track("ai_action_failed", { action: "brain_" + kind, reason: "empty" });
+      } else {
+        setAiResult({ title: t[kind] || "Chatly", body });
+        track("ai_action_completed", { action: "brain_" + kind, chars: body.length });
+      }
+    } catch (e: any) {
+      setAiResult({ title: "Couldn't get a response", body: e?.message || "Please check your connection and try again." });
+      track("ai_action_failed", { action: "brain_" + kind, reason: "error" });
+    } finally { setAiLoading(false); }
   };
 
   const createTaskFromMsg = async () => {
@@ -410,7 +434,30 @@ export default function ChatScreen() {
 
   const openFile = (att: any) => {
     if (!token) return;
-    Linking.openURL(fileUrl(att.storage_path, token));
+    const url = fileUrl(att.storage_path, token);
+    const kind = String(att.kind || "").toLowerCase();
+    const mime = String(att.mime || "").toLowerCase();
+    const filename = String(att.filename || "");
+    const extMatch = filename.match(/\.([a-zA-Z0-9]{1,6})$/);
+    const ext = (extMatch ? "." + extMatch[1].toLowerCase() : (att.ext || ""));
+    // Route to the in-app viewer that matches the media kind. Never punt the
+    // user out to the OS browser: images/videos/PDFs stay inside Chatly.
+    const isImage = kind === "image" || mime.startsWith("image/");
+    const isVideo = kind === "video" || mime.startsWith("video/");
+    const isPdfLike = /\.(pdf|doc|docx|ppt|pptx|xls|xlsx|txt|md|csv)$/i.test(filename) || mime === "application/pdf";
+    const params: any = {
+      uri: url,
+      cacheKey: String(att.storage_path || url),
+      title: filename || "File",
+      ext,
+      mime: att.mime || "",
+    };
+    if (isImage) { router.push({ pathname: "/viewer/image", params }); return; }
+    if (isVideo) { router.push({ pathname: "/viewer/video", params }); return; }
+    if (isPdfLike) { router.push({ pathname: "/viewer/pdf", params }); return; }
+    // Voice notes still play inline via the message row; anything else — fall
+    // back to the system share sheet so the user gets a native experience.
+    try { Linking.openURL(url); } catch {}
   };
 
   const renderMsg = ({ item }: { item: Msg }) => {

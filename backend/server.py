@@ -19,6 +19,7 @@ import calls_routes
 import status_routes
 import firebase_routes
 import firebase_service
+import feedback_routes
 from storage_service import init_storage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -61,6 +62,7 @@ app.include_router(files_routes.router)
 app.include_router(calls_routes.router)
 app.include_router(status_routes.router)
 app.include_router(firebase_routes.router)
+app.include_router(feedback_routes.router)
 
 
 @app.websocket("/api/ws")

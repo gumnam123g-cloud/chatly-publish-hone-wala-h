@@ -16,7 +16,7 @@ from storage_service import put_object, get_object, build_path
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["status"])
 
-STATUS_TTL_HOURS = 24  # retained for backward-compat only; statuses are now permanent
+STATUS_TTL_HOURS = 24  # statuses auto-expire 24h after creation (server-side filter)
 MAX_IMG_B64 = 8_000_000          # ~8 MB base64 (≈6 MB image)
 MAX_VIDEO = 200 * 1024 * 1024    # 200 MB (large-video support)
 
@@ -44,8 +44,14 @@ def _clean(st: dict, me: str) -> dict:
 
 
 async def _active_statuses(user_id: str):
-    # Statuses are permanent (no 24h expiry). Newest last for viewer ordering.
-    cursor = db.statuses.find({"user_id": user_id}, {"_id": 0}).sort("created_at", 1)
+    # Statuses auto-expire 24h after creation. Filter server-side via created_at
+    # (>= now - 24h) so old rows never surface even if expires_at is missing.
+    # Newest last for viewer ordering.
+    cutoff = (_now() - timedelta(hours=STATUS_TTL_HOURS)).isoformat()
+    cursor = db.statuses.find(
+        {"user_id": user_id, "created_at": {"$gte": cutoff}},
+        {"_id": 0},
+    ).sort("created_at", 1)
     return [s async for s in cursor]
 
 
@@ -78,7 +84,7 @@ async def create_status(body: StatusBody, user: dict = Depends(get_current_user)
         "media_b64": body.media_b64 if body.kind == "image" else None,
         "media_path": None, "mime": None,
         "created_at": now.isoformat(),
-        "expires_at": None,  # permanent status
+        "expires_at": (now + timedelta(hours=STATUS_TTL_HOURS)).isoformat(),
         "views": [],
     }
     await db.statuses.insert_one(dict(doc))
@@ -105,7 +111,7 @@ async def create_video_status(file: UploadFile = File(...), caption: str = Form(
         "text": (caption or "").strip(), "bg": None, "media_b64": None,
         "media_path": path, "mime": file.content_type or "video/mp4",
         "created_at": now.isoformat(),
-        "expires_at": None,  # permanent status
+        "expires_at": (now + timedelta(hours=STATUS_TTL_HOURS)).isoformat(),
         "views": [],
     }
     await db.statuses.insert_one(dict(doc))

@@ -16,6 +16,7 @@ import { CallProvider } from "@/src/calls";
 import { ErrorBoundary } from "@/src/ErrorBoundary";
 import { installGlobalErrorHandlers } from "@/src/globalErrors";
 import { configureNotificationHandler, ensureAndroidChannels, routeFromNotificationData } from "@/src/notifications";
+import { track } from "@/src/analytics";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
@@ -52,6 +53,13 @@ export default function RootLayout() {
   useEffect(() => {
     if (loaded || error) SplashScreen.hideAsync();
   }, [loaded, error]);
+
+  // Fire once per cold-start so we can measure launches. Deferred so it doesn't
+  // race the auth hydrate (no /analytics/event call before we have a session).
+  useEffect(() => {
+    const t = setTimeout(() => { try { track("app_open"); } catch {} }, 2500);
+    return () => clearTimeout(t);
+  }, []);
 
   if (!loaded && !error) return null;
 

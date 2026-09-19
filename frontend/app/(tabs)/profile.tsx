@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { View, ScrollView, Pressable, Modal, StyleSheet, Linking, Keyboard, Platform } from "react-native";
+import { View, ScrollView, Pressable, Modal, StyleSheet, Linking, Keyboard, Platform, Share } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,6 +9,7 @@ import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { pickAvatar } from "@/src/upload";
 import { SUPPORT_EMAIL } from "@/src/LegalDoc";
+import { track } from "@/src/analytics";
 
 export default function Profile() {
   const { colors, mode, setMode } = useTheme();
@@ -176,6 +177,14 @@ export default function Profile() {
           </Card>
 
           <Card style={{ paddingVertical: spacing.xs }}>
+            <SettingRow testID="row-share-app" icon="share-social-outline" label="Share Chatly" onPress={async () => {
+              try {
+                const msg = "Chatly AI Messenger \u2014 the AI-native messenger. Try it: https://chatly.app";
+                await Share.share({ message: msg, title: "Chatly AI Messenger" });
+                track("share_app");
+              } catch { toast.show("Couldn't open share sheet.", "error"); }
+            }} />
+            <SettingRow testID="row-feedback" icon="chatbubbles-outline" label="Send Feedback" onPress={() => router.push("/feedback")} />
             <SettingRow testID="row-privacy-policy" icon="reader-outline" label="Privacy Policy" onPress={() => router.push("/legal/privacy")} />
             <SettingRow testID="row-terms" icon="document-text-outline" label="Terms & Conditions" onPress={() => router.push("/legal/terms")} />
             <SettingRow testID="row-support" icon="mail-outline" label="Contact Support" onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}`)} />
