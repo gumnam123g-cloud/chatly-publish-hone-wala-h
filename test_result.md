@@ -739,7 +739,7 @@ agent_communication:
       
       ALL 7 TESTS PASSED (7/7) - NO FAILURES
       
-      Tested ALL NEW/CHANGED endpoints for Phase 10 at https://chatly-app-3.preview.emergentagent.com/api using credentials demo@chatly.app / Demo1234 and demo2@chatly.app / Demo1234.
+      Tested ALL NEW/CHANGED endpoints for Phase 10 at https://chatly-mobile.preview.emergentagent.com/api using credentials demo@chatly.app / Demo1234 and demo2@chatly.app / Demo1234.
       
       ✅ TEST 1: AI MESSAGE ACTIONS (4/4 PASS)
       • Translate Hinglish→English: 'Bhai kal report bhej dena please' → 'Bro, please send the report tomorrow.' (auto-detected source, correct translation)

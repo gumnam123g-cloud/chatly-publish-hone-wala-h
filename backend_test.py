@@ -9,7 +9,7 @@ import sys
 from typing import Dict, Any
 
 # Backend URL from review request
-BASE_URL = "https://chatly-app-3.preview.emergentagent.com/api"
+BASE_URL = "https://chatly-mobile.preview.emergentagent.com/api"
 
 # Test credentials from review request
 DEMO_EMAIL = "demo@chatly.app"
