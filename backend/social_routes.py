@@ -189,15 +189,52 @@ async def my_qr(user: dict = Depends(get_current_user)):
     return {"qr_token": token, "payload": f"chatly://user/{token}", "user": _pub(user, user["user_id"])}
 
 
-@router.get("/users/by-qr/{code}")
-async def user_by_qr(code: str, user: dict = Depends(get_current_user)):
-    code = (code or "").strip()
+def _extract_qr_token(raw: str) -> str:
+    """Normalise a scanned value into a bare CHATLY-token.
+    Accepts: 'CHATLY-xxx', 'chatly://user/CHATLY-xxx', full deep links / URLs with the
+    token in the path or a ?code= query, plus stray whitespace/encoding."""
+    import urllib.parse
+    code = urllib.parse.unquote((raw or "").strip())
+    # If it's a deep link / URL, pull the last meaningful segment or ?code=
+    if "code=" in code:
+        try:
+            q = urllib.parse.urlparse(code).query or code.split("?", 1)[-1]
+            parsed = urllib.parse.parse_qs(q).get("code", [])
+            if parsed:
+                code = parsed[0]
+        except Exception:
+            pass
     if "chatly://user/" in code:
-        code = code.split("chatly://user/")[-1].strip()
-    target = await db.users.find_one({"qr_token": code, "deleted_at": None}, {"_id": 0, "password": 0})
+        code = code.split("chatly://user/")[-1]
+    elif "/user/" in code:
+        code = code.split("/user/")[-1]
+    # keep only the token portion (strip any trailing path/query fragments)
+    code = code.strip().strip("/").split("?")[0].split("/")[0].strip()
+    return code
+
+
+async def _resolve_qr(code: str, user: dict) -> dict:
+    token = _extract_qr_token(code)
+    if not token:
+        raise HTTPException(status_code=400, detail="This QR code is not valid.")
+    target = await db.users.find_one({"qr_token": token, "deleted_at": None}, {"_id": 0, "password": 0})
     if not target:
         raise HTTPException(status_code=404, detail="This QR code is not valid.")
     return {"user": await _profile_payload(target, user)}
+
+
+@router.get("/users/by-qr")
+async def user_by_qr_query(code: str, user: dict = Depends(get_current_user)):
+    """Preferred QR lookup: token passed as a query param so deep-link URLs containing
+    slashes never break FastAPI path routing (this was the real 'user not found' bug)."""
+    return await _resolve_qr(code, user)
+
+
+@router.get("/users/by-qr/{code:path}")
+async def user_by_qr(code: str, user: dict = Depends(get_current_user)):
+    """Backward-compatible path lookup. Uses {code:path} so a full 'chatly://user/...'
+    deep link no longer breaks route matching on the '/' characters."""
+    return await _resolve_qr(code, user)
 
 
 @router.get("/users/{user_id}")

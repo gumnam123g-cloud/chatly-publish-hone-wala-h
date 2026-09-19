@@ -16,11 +16,25 @@ export default function ScanScreen() {
   const [manual, setManual] = useState("");
   const handled = useRef(false);
 
-  const resolve = async (code: string) => {
+  const extractToken = (raw: string) => {
+    let code = (raw || "").trim();
+    try { code = decodeURIComponent(code); } catch {}
+    if (code.includes("code=")) {
+      const m = code.match(/[?&]code=([^&]+)/);
+      if (m) code = decodeURIComponent(m[1]);
+    }
+    if (code.includes("chatly://user/")) code = code.split("chatly://user/").pop() || code;
+    else if (code.includes("/user/")) code = code.split("/user/").pop() || code;
+    return code.replace(/^\/+|\/+$/g, "").split("?")[0].split("/")[0].trim();
+  };
+
+  const resolve = async (raw: string) => {
     if (resolving) return;
+    const token = extractToken(raw);
+    if (!token) { toast.show("Invalid QR code", "error"); handled.current = false; return; }
     setResolving(true);
     try {
-      const res = await api.get(`/users/by-qr/${encodeURIComponent(code.trim())}`);
+      const res = await api.get(`/users/by-qr?code=${encodeURIComponent(token)}`);
       router.replace({ pathname: "/user/[id]", params: { id: res.user.user_id } });
     } catch (e: any) {
       toast.show(e.message || "Invalid QR code", "error");

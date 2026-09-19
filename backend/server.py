@@ -17,6 +17,8 @@ import groups_routes
 import files_routes
 import calls_routes
 import status_routes
+import firebase_routes
+import firebase_service
 from storage_service import init_storage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -58,6 +60,7 @@ app.include_router(groups_routes.router)
 app.include_router(files_routes.router)
 app.include_router(calls_routes.router)
 app.include_router(status_routes.router)
+app.include_router(firebase_routes.router)
 
 
 @app.websocket("/api/ws")
@@ -170,6 +173,11 @@ async def on_startup():
     await _seed_demo_contacts()
     await _seed_test_user()
     await _backfill_qr_tokens()
+    try:
+        firebase_service.init_firebase()
+        logger.info("Firebase Admin status: %s", firebase_service.status())
+    except Exception as e:
+        logger.warning(f"Firebase init deferred: {e}")
     try:
         await init_storage()
         logger.info("Object storage initialized")
