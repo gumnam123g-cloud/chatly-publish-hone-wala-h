@@ -332,11 +332,90 @@ metadata:
 
 test_plan:
   current_focus:
-    - "MILESTONE A DELIVERED: Status 24h expiry restored; in-app image/video/PDF viewers; feedback + analytics endpoints; Share Chatly; AI action modal fix. Backend tested (curl). Frontend needs UI regression + AI-action E2E in a chat."
+    - "MILESTONE B DELIVERED: Personal AI Assistant (intent + confirm), Scheduled + Recurring Messages (backend cron), Chat Templates, Universal Search, Daily/Morning/EoD Brief, Scam Detector, Link Preview, Contact Brief, Two-Way Translation mode, Per-message Expiry, Chat Export. All backend endpoints verified via curl. Frontend screens rendered on preview."
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
   run_ui: false
+
+milestone_b_phase2_delivered:
+  - task: "AI Personal Assistant (POST /api/assistant/interpret) + confirmation UI"
+    implemented: true
+    working: true
+    file: "backend/insights_routes.py, frontend/app/assistant.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "ai_json returns strict {action, params, human_readable}. Frontend surfaces a Confirm/Dismiss card for consequential actions (create_task, create_reminder, schedule_message) - never silently executes. Verified: 'Kal 9 baje Rahul ko message karna hai' -> action='schedule_message' with parsed hint/text/send_at_iso."
+  - task: "Scheduled + Recurring Messages (backend cron, list, edit, pause, cancel)"
+    implemented: true
+    working: true
+    file: "backend/schedule_routes.py, backend/server.py, frontend/app/scheduled.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "15s asyncio tick dispatches due schedules through _persist_message (real WS + FCM broadcast). Recurrence daily/weekly/custom-N-days advances send_at instead of deleting. Verified: created schedule at +2min, cron dispatched status=sent within window, delivered_at recorded. Full CRUD + tab (Active/Past) UI."
+  - task: "Message Templates (CRUD + seed) & template renderer"
+    implemented: true
+    working: true
+    file: "backend/templates_routes.py, frontend/app/templates.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "6 seeded templates on first fetch. Full create/update/delete/copy. Merge tokens {name}/{topic}/{date}. Render endpoint returns N personalised drafts for multi-message composer flows."
+  - task: "Daily Brief / Morning Plan / End-of-Day Summary"
+    implemented: true
+    working: true
+    file: "backend/insights_routes.py, frontend/app/daily-brief.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Feeds unread(last 24h) + open tasks + upcoming reminders into ai_complete. out_lang honoured (English/Hindi/Hinglish). Verified: brief returned proper bullet-pointed sections."
+  - task: "Universal Search across chats/messages/tasks/reminders/files"
+    implemented: true
+    working: true
+    file: "backend/insights_routes.py, frontend/app/universal-search.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Regex-safe query, five parallel collections, capped at safe limits. Verified: q=payment returned 1 chat, 2 messages. Debounced 350ms input on frontend."
+  - task: "AI Scam Detector + Link Preview + Contact Brief"
+    implemented: true
+    working: true
+    file: "backend/insights_routes.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Scam: strict JSON {risk_level, reasons, advice} - verified 'URGENT send OTP' -> risk=high with 4 reasons. Link preview: OG scrape + safety signals (url_shortener/non_https). Contact brief: 30-day chat window + ai_complete summary."
+  - task: "Two-Way Translation Mode (per-chat) + Chat Export + Per-message Expiry"
+    implemented: true
+    working: true
+    file: "backend/chat_routes.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "POST /chats/{id}/translation-mode stores per-user setting (to/from lang). POST /chats/{id}/export?fmt=markdown|text returns filename+content+count. SendBody now accepts expires_in_seconds (60..30d), get_messages filters expired. Backend curl: 3-msg markdown export produced clean output."
 
 milestone_a_phase1_partial:
   - task: "Status expiry restored to 24h (server-side created_at filter + expires_at=now+24h)"

@@ -137,5 +137,6 @@ export const api = {
   get: <T = any>(p: string, auth = true) => request<T>("GET", p, undefined, auth),
   post: <T = any>(p: string, b?: any, auth = true) => request<T>("POST", p, b, auth),
   put: <T = any>(p: string, b?: any, auth = true) => request<T>("PUT", p, b, auth),
+  patch: <T = any>(p: string, b?: any, auth = true) => request<T>("PATCH", p, b, auth),
   del: <T = any>(p: string, auth = true) => request<T>("DELETE", p, undefined, auth),
 };

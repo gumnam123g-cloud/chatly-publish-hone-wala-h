@@ -156,6 +156,9 @@ export default function Profile() {
             <SettingRow testID="row-ai-memory" icon="bookmark-outline" label="AI Memory" onPress={() => router.push("/memory")} />
             <SettingRow testID="row-creations" icon="color-wand-outline" label="AI Creations" onPress={() => router.push("/creations")} />
             <SettingRow testID="row-research" icon="globe-outline" label="Research History" onPress={() => router.push("/research")} />
+            <SettingRow testID="row-scheduled" icon="time-outline" label="Scheduled Messages" onPress={() => router.push("/scheduled")} />
+            <SettingRow testID="row-templates" icon="document-text-outline" label="Message Templates" onPress={() => router.push("/templates")} />
+            <SettingRow testID="row-daily-brief" icon="newspaper-outline" label="Daily Brief" onPress={() => router.push("/daily-brief")} />
             <SettingRow testID="row-reminders" icon="alarm-outline" label="Reminders" onPress={() => router.push("/reminders")} />
           </Card>
 

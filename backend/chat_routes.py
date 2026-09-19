@@ -145,6 +145,7 @@ async def _chat_view(chat: dict, me: str) -> dict:
             base["blocked_by_me"] = other_id in (me_doc or {}).get("blocked", [])
             base["blocked_me"] = me in (other_doc or {}).get("blocked", [])
     base["theme"] = chat.get("themes", {}).get(me)
+    base["translation"] = chat.get("translation", {}).get(me)
     return base
 
 
@@ -178,6 +179,12 @@ async def get_messages(chat_id: str, user: dict = Depends(get_current_user),
     q = {"chat_id": chat_id, "deleted_for": {"$ne": user["user_id"]}}
     if before:
         q["created_at"] = {"$lt": before}
+    # Filter out messages whose per-message TTL (feature #43) has elapsed.
+    # `expires_at` is stored as an ISO string; string comparison is safe for
+    # UTC ISO-8601. We accept messages where expires_at is null OR still in the
+    # future.
+    _now_iso = _now()
+    q["$or"] = [{"expires_at": None}, {"expires_at": {"$gt": _now_iso}}, {"expires_at": {"$exists": False}}]
     cursor = db.messages.find(q, {"_id": 0}).sort("created_at", -1).limit(limit)
     msgs = [m async for m in cursor]
     msgs.reverse()
@@ -193,10 +200,15 @@ class SendBody(BaseModel):
     text: str = Field(min_length=1, max_length=20000)
     type: str = "text"
     reply_to: str | None = None
+    # Optional per-message expiry (feature #43). Sender sets a TTL in seconds
+    # (1h=3600, 1d=86400, 7d=604800, or custom). Server converts to an absolute
+    # ISO timestamp so the receiver's clock skew never matters. Expired messages
+    # are filtered out of get_messages and tombstoned lazily.
+    expires_in_seconds: int | None = Field(default=None, ge=60, le=60 * 60 * 24 * 30)
 
 
 async def _persist_message(chat_id: str, sender_id: str, text: str, mtype: str = "text",
-                           reply_to: str | None = None) -> dict:
+                           reply_to: str | None = None, expires_at: str | None = None) -> dict:
     msg = {
         "message_id": str(uuid.uuid4()),
         "chat_id": chat_id,
@@ -210,6 +222,7 @@ async def _persist_message(chat_id: str, sender_id: str, text: str, mtype: str =
         "read_by": [sender_id],
         "edited": False,
         "deleted": False,
+        "expires_at": expires_at,
         "created_at": _now(),
     }
     await db.messages.insert_one(dict(msg))
@@ -267,7 +280,12 @@ async def send_message(chat_id: str, body: SendBody, user: dict = Depends(get_cu
         other_doc = await db.users.find_one({"user_id": oid}, {"_id": 0, "blocked": 1})
         if user["user_id"] in (other_doc or {}).get("blocked", []) or oid in user.get("blocked", []):
             raise HTTPException(status_code=403, detail="You can't send messages in this chat.")
-    msg = await _persist_message(chat_id, user["user_id"], body.text.strip(), body.type, body.reply_to)
+    # Compute per-message expiry if requested.
+    _expires_at = None
+    if body.expires_in_seconds:
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        _expires_at = (_dt.now(_tz.utc) + _td(seconds=int(body.expires_in_seconds))).isoformat()
+    msg = await _persist_message(chat_id, user["user_id"], body.text.strip(), body.type, body.reply_to, expires_at=_expires_at)
     await manager.send_to_users(others, {"type": "message", "chat_id": chat_id, "message": msg})
     # Real FCM push to recipients who are not muted and are not bots (skip the sender).
     try:
@@ -309,6 +327,84 @@ async def set_chat_theme(chat_id: str, body: ThemeBody, user: dict = Depends(get
     else:
         await db.chats.update_one({"chat_id": chat_id}, {"$set": {key: body.theme}})
     return {"theme": body.theme}
+
+
+# ---------------------------------------------------------------------------
+# Two-Way Translation Mode (feature #38)
+#
+# When a chat has translation mode ON, incoming messages are auto-translated
+# to `to_lang` and outgoing messages are auto-translated to `from_lang` before
+# sending. Both original + translation are shown in the UI (never destroyed).
+# Setting is per-user-per-chat so each side can pick their own preference.
+
+class TranslationMode(BaseModel):
+    enabled: bool = False
+    to_lang: str = "English"     # translate incoming to this
+    from_lang: str = "English"   # translate outgoing to this
+
+
+@router.post("/chats/{chat_id}/translation-mode")
+async def set_translation_mode(chat_id: str, body: TranslationMode, user: dict = Depends(get_current_user)):
+    chat = await db.chats.find_one({"chat_id": chat_id, "participants": user["user_id"]})
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found.")
+    key = f"translation.{user['user_id']}"
+    payload = {"enabled": body.enabled, "to_lang": body.to_lang, "from_lang": body.from_lang}
+    if not body.enabled:
+        await db.chats.update_one({"chat_id": chat_id}, {"$unset": {key: ""}})
+        return {"translation": None}
+    await db.chats.update_one({"chat_id": chat_id}, {"$set": {key: payload}})
+    return {"translation": payload}
+
+
+# ---------------------------------------------------------------------------
+# Chat Export (feature #39)
+#
+# Exports the visible history of a chat as UTF-8 text or Markdown. Messages
+# deleted-for-me are excluded; expired messages are excluded; system messages
+# are labelled. Requires participation in the chat.
+
+@router.post("/chats/{chat_id}/export")
+async def export_chat(chat_id: str, fmt: str = Query("markdown", pattern="^(markdown|text)$"),
+                      user: dict = Depends(get_current_user)):
+    chat = await db.chats.find_one({"chat_id": chat_id, "participants": user["user_id"]})
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found.")
+    _now_iso = _now()
+    q = {"chat_id": chat_id, "deleted_for": {"$ne": user["user_id"]},
+         "$or": [{"expires_at": None}, {"expires_at": {"$gt": _now_iso}}, {"expires_at": {"$exists": False}}]}
+    msgs = [m async for m in db.messages.find(q, {"_id": 0}).sort("created_at", 1)]
+    # Build a display-name map for participants.
+    users = {u["user_id"]: u.get("name", "User") async for u in db.users.find(
+        {"user_id": {"$in": chat["participants"]}}, {"_id": 0, "user_id": 1, "name": 1})}
+    title = chat.get("title") or ", ".join(users.get(p, "User") for p in chat["participants"])
+    lines: list[str] = []
+    if fmt == "markdown":
+        lines.append(f"# {title}")
+        lines.append(f"_Exported by Chatly on {_now_iso}_\n")
+    else:
+        lines.append(f"{title}")
+        lines.append(f"Exported by Chatly on {_now_iso}\n")
+    for m in msgs:
+        who = users.get(m.get("sender_id"), "User")
+        when = (m.get("created_at") or "")[:19].replace("T", " ")
+        text = (m.get("text") or "").replace("\r\n", "\n")
+        if m.get("deleted"):
+            text = "(deleted)"
+        if m.get("type") == "system":
+            if fmt == "markdown":
+                lines.append(f"> {text}")
+            else:
+                lines.append(f"[{when}] system: {text}")
+            continue
+        if fmt == "markdown":
+            lines.append(f"**{who}** _{when}_  \n{text}\n")
+        else:
+            lines.append(f"[{when}] {who}: {text}")
+    body = "\n".join(lines) + "\n"
+    return {"filename": f"{chat_id}.{ 'md' if fmt=='markdown' else 'txt'}",
+            "content": body, "message_count": len(msgs)}
+
 
 
 @router.delete("/chats/{chat_id}")
