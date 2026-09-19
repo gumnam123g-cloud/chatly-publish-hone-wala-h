@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
   View, FlatList, Pressable, TextInput, StyleSheet,
   Platform, Modal, ScrollView, ActivityIndicator, Linking,
@@ -32,8 +32,18 @@ const MSG_ACTIONS = [
   { key: "explain", label: "Explain", icon: "bulb-outline" },
   { key: "summarize", label: "Summarize", icon: "document-text-outline" },
   { key: "translate", label: "Translate", icon: "language-outline" },
-  { key: "rewrite", label: "Draft a Reply", icon: "return-up-forward-outline" },
+  { key: "reply", label: "Draft a Reply", icon: "return-up-forward-outline" },
 ];
+
+// Searchable language list for per-action output language.
+const LANGUAGES = [
+  "English", "Hindi", "Hinglish (Roman Hindi)", "Bengali", "Tamil", "Telugu", "Marathi",
+  "Gujarati", "Kannada", "Malayalam", "Punjabi", "Urdu", "Odia", "Assamese",
+  "Spanish", "French", "German", "Portuguese", "Italian", "Dutch", "Russian",
+  "Arabic", "Chinese (Simplified)", "Japanese", "Korean", "Turkish", "Indonesian",
+  "Vietnamese", "Thai", "Polish", "Ukrainian", "Persian", "Hebrew", "Greek",
+];
+const TONES = ["friendly", "professional", "casual", "concise", "polite", "firm", "apologetic"];
 
 const ATT_ACTIONS = [
   { key: "summarize", label: "Summarize", icon: "document-text-outline" },
@@ -81,6 +91,11 @@ export default function ChatScreen() {
   const [brainOpen, setBrainOpen] = useState(false);
   const [aiResult, setAiResult] = useState<{ title: string; body: string; canReply?: boolean } | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  // Per-action language + tone selection
+  const [langSheet, setLangSheet] = useState<null | { action: string; scope: "message" | "brain" }>(null);
+  const [aiLang, setAiLang] = useState("English");
+  const [aiTone, setAiTone] = useState("friendly");
+  const [langSearch, setLangSearch] = useState("");
 
   const [otherId, setOtherId] = useState<string | null>(null);
   const [blockedByMe, setBlockedByMe] = useState(false);
@@ -92,6 +107,46 @@ export default function ChatScreen() {
   const ct = resolveChatTheme(chatTheme, colors);
 
   const typingTimer = useRef<any>(null);
+
+  // --- Auto-scroll management ---
+  const listRef = useRef<FlatList<any>>(null);
+  const atBottomRef = useRef(true);
+  const didInitialScroll = useRef(false);
+  const [showJump, setShowJump] = useState(false);
+
+  const scrollToBottom = useCallback((animated = true) => {
+    requestAnimationFrame(() => {
+      try { listRef.current?.scrollToEnd({ animated }); } catch {}
+    });
+  }, []);
+
+  const dayLabel = (d: string) => {
+    const m = dayjs(d); const now = dayjs();
+    if (m.isSame(now, "day")) return "Today";
+    if (m.isSame(now.subtract(1, "day"), "day")) return "Yesterday";
+    if (m.isSame(now, "year")) return m.format("ddd, D MMM");
+    return m.format("D MMM YYYY");
+  };
+
+  // Messages with day separators injected when the calendar day changes.
+  const items = useMemo(() => {
+    const out: any[] = [];
+    let last = "";
+    for (const m of messages) {
+      const lbl = dayLabel(m.created_at);
+      if (lbl !== last) { out.push({ __sep: lbl, message_id: `sep_${lbl}_${m.message_id}` }); last = lbl; }
+      out.push(m);
+    }
+    return out;
+  }, [messages]);
+
+  const onListScroll = (e: any) => {
+    const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+    const dist = contentSize.height - (contentOffset.y + layoutMeasurement.height);
+    const atBottom = dist < 90;
+    atBottomRef.current = atBottom;
+    if (atBottom && showJump) setShowJump(false);
+  };
 
   const loadMeta = useCallback(async () => {
     try {
@@ -135,6 +190,8 @@ export default function ChatScreen() {
     try {
       const res = await api.get<{ messages: Msg[] }>(`/chats/${id}/messages`);
       setMessages(res.messages);
+      didInitialScroll.current = false;
+      atBottomRef.current = true;
     } catch { toast.show("Failed to load messages", "error"); }
     finally { setLoading(false); }
   }, [id]);
@@ -144,8 +201,13 @@ export default function ChatScreen() {
   useEffect(() => subscribe((ev) => {
     if (ev.chat_id !== id) return;
     if (ev.type === "message") {
+      const mine = ev.message?.sender_id === user?.user_id;
       setMessages((prev) => prev.some((m) => m.message_id === ev.message.message_id) ? prev : [...prev, ev.message]);
       setSmartReplies([]);
+      // Auto-scroll only if the user is already near the bottom (don't yank them up
+      // while they read older messages); otherwise surface a jump-to-latest button.
+      if (mine || atBottomRef.current) scrollToBottom(true);
+      else setShowJump(true);
     } else if (ev.type === "typing") {
       setOtherTyping(ev.typing);
     } else if (ev.type === "reaction") {
@@ -153,7 +215,7 @@ export default function ChatScreen() {
     } else if (ev.type === "deleted") {
       setMessages((prev) => prev.map((m) => m.message_id === ev.message_id ? { ...m, deleted: true, text: "This message was deleted" } : m));
     }
-  }), [subscribe, id]);
+  }), [subscribe, id, user, scrollToBottom]);
 
   const onSend = async () => {
     const body = text.trim();
@@ -165,6 +227,8 @@ export default function ChatScreen() {
       status: "sending", reactions: {}, starred_by: [], edited: false, deleted: false, created_at: new Date().toISOString(),
     };
     setMessages((p) => [...p, optimistic]);
+    atBottomRef.current = true;
+    scrollToBottom(true);
     try {
       const res = await api.post<{ message: Msg }>(`/chats/${id}/messages`, { text: body });
       setMessages((p) => p.map((m) => m.message_id === optimistic.message_id ? res.message : m));
@@ -192,23 +256,40 @@ export default function ChatScreen() {
     finally { setLoadingReplies(false); }
   };
 
-  const runMsgAction = async (action: string) => {
+  // Actions that produce output in a user-chosen language (and tone for replies).
+  const LANG_ACTIONS = ["translate", "summarize", "explain", "reply"];
+
+  const startMsgAction = (action: string) => {
+    if (LANG_ACTIONS.includes(action)) { setLangSearch(""); setLangSheet({ action, scope: "message" }); }
+    else runMsgAction(action);
+  };
+
+  const runMsgAction = async (action: string, lang?: string, tone?: string) => {
     if (!selected) return;
+    setLangSheet(null);
     setAiLoading(true); setAiResult({ title: "Chatly", body: "" });
     try {
-      const res = await api.post<{ result: string }>("/ai/message-action", {
-        text: selected.text, action, target_lang: action === "translate" ? "English" : undefined,
-      });
-      const titles: any = { explain: "Explanation", summarize: "Summary", translate: "Translation", rewrite: "Suggested Reply" };
-      setAiResult({ title: titles[action] || "Chatly", body: res.result, canReply: action === "rewrite" });
+      const payload: any = { text: selected.text, action };
+      if (action === "translate") payload.target_lang = lang || "English";
+      else if (["summarize", "explain", "reply"].includes(action) && lang) payload.out_lang = lang;
+      if (action === "reply") { payload.tone = tone || aiTone; payload.context = messages.slice(-8).map((m) => `${m.sender_id === user?.user_id ? "Me" : "Them"}: ${m.text}`).join("\n"); }
+      const res = await api.post<{ result: string }>("/ai/message-action", payload);
+      const titles: any = { explain: "Explanation", summarize: "Summary", translate: "Translation", reply: "Suggested Reply" };
+      setAiResult({ title: titles[action] || "Chatly", body: res.result, canReply: action === "reply" });
     } catch (e: any) { setAiResult({ title: "Error", body: e.message }); }
     finally { setAiLoading(false); }
   };
 
-  const runBrain = async (kind: string) => {
+  const startBrain = (kind: string) => {
+    if (["summary", "important", "decisions"].includes(kind)) { setLangSearch(""); setLangSheet({ action: kind, scope: "brain" }); }
+    else runBrain(kind);
+  };
+
+  const runBrain = async (kind: string, lang?: string) => {
+    setLangSheet(null);
     setAiLoading(true); setAiResult({ title: "Chatly", body: "" });
     try {
-      const res = await api.post<{ result: string }>("/ai/chat-brain", { chat_id: id, kind });
+      const res = await api.post<{ result: string }>("/ai/chat-brain", { chat_id: id, kind, out_lang: lang || undefined });
       const t: any = { summary: "Summary", important: "Important Messages", timeline: "Timeline", pending: "Pending Replies", decisions: "Decisions" };
       setAiResult({ title: t[kind] || "Chatly", body: res.result });
     } catch (e: any) { setAiResult({ title: "Error", body: e.message }); }
@@ -254,10 +335,15 @@ export default function ChatScreen() {
     catch { toast.show("Failed", "error"); }
   };
 
-  const deleteMsg = async () => {
+  const deleteMsg = async (scope: "me" | "everyone") => {
     if (!selected) return;
-    try { await api.del(`/messages/${selected.message_id}`); setSelected(null); }
-    catch (e: any) { toast.show(e.message, "error"); }
+    const mid = selected.message_id;
+    try {
+      await api.del(`/messages/${mid}?scope=${scope}`);
+      if (scope === "me") setMessages((p) => p.filter((m) => m.message_id !== mid));
+      else setMessages((p) => p.map((m) => m.message_id === mid ? { ...m, deleted: true, text: "This message was deleted" } : m));
+      setSelected(null);
+    } catch (e: any) { toast.show(e.message, "error"); }
   };
 
   const doUpload = async (fn: () => Promise<any>) => {
@@ -427,13 +513,41 @@ export default function ChatScreen() {
       <KeyboardAvoidingView style={{ flex: 1, backgroundColor: ct.bg }} behavior="padding" keyboardVerticalOffset={0}>
         {loading ? <Loading /> : (
           <FlatList
-            data={messages}
+            ref={listRef}
+            data={items}
             keyExtractor={(m) => m.message_id}
-            renderItem={renderMsg}
+            renderItem={({ item }) =>
+              item.__sep ? (
+                <View style={{ alignItems: "center", marginVertical: spacing.sm }}>
+                  <View style={{ backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: spacing.md, paddingVertical: 4 }}>
+                    <AppText size="xs" muted weight="bold">{item.__sep}</AppText>
+                  </View>
+                </View>
+              ) : renderMsg({ item })
+            }
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingVertical: spacing.md, flexGrow: 1 }}
+            onScroll={onListScroll}
+            scrollEventThrottle={16}
+            onContentSizeChange={() => {
+              // Open the chat at the latest message on first render, and keep it pinned
+              // to the bottom while the user is already there.
+              if (!didInitialScroll.current) { didInitialScroll.current = true; scrollToBottom(false); }
+              else if (atBottomRef.current) scrollToBottom(false);
+            }}
+            maintainVisibleContentPosition={Platform.OS !== "web" ? { minIndexForVisible: 0 } : undefined}
             ListEmptyComponent={<View style={{ padding: spacing.xxl, alignItems: "center" }}><AppText muted center>Say hello and start the conversation</AppText></View>}
           />
+        )}
+
+        {showJump && (
+          <Pressable
+            testID="jump-to-latest"
+            onPress={() => { atBottomRef.current = true; setShowJump(false); scrollToBottom(true); }}
+            style={{ position: "absolute", right: spacing.lg, bottom: 96, backgroundColor: colors.brandPrimary, width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 4 }}
+          >
+            <Icon name="arrow-down" size={22} color="#fff" />
+          </Pressable>
         )}
 
         {/* Smart replies */}
@@ -530,7 +644,7 @@ export default function ChatScreen() {
                   <AppText style={{ marginLeft: spacing.md }} weight="medium">{a.label}</AppText>
                 </Pressable>
               )) : MSG_ACTIONS.map((a) => (
-                <Pressable key={a.key} testID={`msg-action-${a.key}`} onPress={() => runMsgAction(a.key)} style={styles.actionRow}>
+                <Pressable key={a.key} testID={`msg-action-${a.key}`} onPress={() => startMsgAction(a.key)} style={styles.actionRow}>
                   <Icon name={a.icon as any} size={20} color={colors.brandPrimary} />
                   <AppText style={{ marginLeft: spacing.md }} weight="medium">{a.label}</AppText>
                 </Pressable>
@@ -548,9 +662,12 @@ export default function ChatScreen() {
               <Pressable testID="action-star" onPress={star} style={styles.actionRow}>
                 <Icon name="star-outline" size={20} /><AppText style={{ marginLeft: spacing.md }} weight="medium">Star</AppText>
               </Pressable>
-              {selected?.sender_id === user?.user_id && (
-                <Pressable testID="action-delete" onPress={deleteMsg} style={styles.actionRow}>
-                  <Icon name="trash-outline" size={20} color={colors.error} /><AppText style={{ marginLeft: spacing.md }} weight="medium" color={colors.error}>Delete</AppText>
+              <Pressable testID="action-delete-me" onPress={() => deleteMsg("me")} style={styles.actionRow}>
+                <Icon name="trash-outline" size={20} color={colors.error} /><AppText style={{ marginLeft: spacing.md }} weight="medium" color={colors.error}>Delete for me</AppText>
+              </Pressable>
+              {selected?.sender_id === user?.user_id && !selected?.deleted && (
+                <Pressable testID="action-delete-everyone" onPress={() => deleteMsg("everyone")} style={styles.actionRow}>
+                  <Icon name="trash-bin-outline" size={20} color={colors.error} /><AppText style={{ marginLeft: spacing.md }} weight="medium" color={colors.error}>Delete for everyone</AppText>
                 </Pressable>
               )}
             </ScrollView>
@@ -558,7 +675,53 @@ export default function ChatScreen() {
         </View>
       </Modal>
 
-      {/* Attachment options */}
+      {/* Per-action language + tone picker */}
+      <Modal visible={!!langSheet} transparent animationType="slide" onRequestClose={() => setLangSheet(null)}>
+        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={() => setLangSheet(null)} />
+        <View style={[styles.sheet, { backgroundColor: colors.card, paddingBottom: insets.bottom + spacing.lg }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
+            <Icon name="language-outline" size={18} color={colors.brandPrimary} />
+            <AppText weight="bold" size="lg" style={{ marginLeft: 8, flex: 1 }}>
+              {langSheet?.action === "translate" ? "Translate to" : "Output language"}
+            </AppText>
+            <Pressable onPress={() => setLangSheet(null)}><Icon name="close" size={22} /></Pressable>
+          </View>
+
+          {langSheet?.action === "reply" && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: spacing.sm }} contentContainerStyle={{ gap: spacing.sm }}>
+              {TONES.map((t) => (
+                <Pressable key={t} testID={`tone-${t}`} onPress={() => setAiTone(t)} style={{ paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, borderWidth: 1, borderColor: aiTone === t ? colors.brandPrimary : colors.border, backgroundColor: aiTone === t ? colors.brandTertiary : "transparent" }}>
+                  <AppText size="sm" weight="semibold" color={aiTone === t ? colors.onBrandTertiary : colors.onSurface} style={{ textTransform: "capitalize" }}>{t}</AppText>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+
+          <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceTertiary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44, marginBottom: spacing.sm }}>
+            <Icon name="search" size={16} color={colors.onSurfaceMuted} />
+            <TextInput testID="lang-search" value={langSearch} onChangeText={setLangSearch} placeholder="Search language" placeholderTextColor={colors.onSurfaceMuted} autoCapitalize="none" style={{ flex: 1, marginLeft: 8, color: colors.onSurface, fontSize: fontSize.base }} />
+          </View>
+
+          <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
+            {LANGUAGES.filter((l) => l.toLowerCase().includes(langSearch.trim().toLowerCase())).map((l) => (
+              <Pressable
+                key={l}
+                testID={`lang-${l}`}
+                onPress={() => {
+                  setAiLang(l);
+                  const lg = l.startsWith("Hinglish") ? "Hinglish (write Hindi using Roman/English script)" : l;
+                  if (langSheet?.scope === "brain") runBrain(langSheet.action, lg);
+                  else runMsgAction(langSheet!.action, lg, aiTone);
+                }}
+                style={[styles.actionRow, { justifyContent: "space-between" }]}
+              >
+                <AppText weight="medium">{l}</AppText>
+                {aiLang === l && <Icon name="checkmark" size={18} color={colors.brandPrimary} />}
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
       <Modal visible={attachOpen} transparent animationType="slide" onRequestClose={() => setAttachOpen(false)}>
         <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={() => setAttachOpen(false)} />
         <View style={[styles.sheet, { backgroundColor: colors.card, paddingBottom: insets.bottom + spacing.lg }]}>
@@ -598,7 +761,7 @@ export default function ChatScreen() {
           ) : (
             <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
               {BRAIN_ACTIONS.map((a) => (
-                <Pressable key={a.key} testID={`brain-${a.key}`} onPress={() => runBrain(a.key)} style={{ width: "50%", padding: spacing.xs }}>
+                <Pressable key={a.key} testID={`brain-${a.key}`} onPress={() => startBrain(a.key)} style={{ width: "50%", padding: spacing.xs }}>
                   <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, flexDirection: "row", alignItems: "center" }}>
                     <Icon name={a.icon as any} size={20} color={colors.brandPrimary} />
                     <AppText weight="semibold" style={{ marginLeft: 8 }} numberOfLines={1}>{a.label}</AppText>

@@ -29,12 +29,18 @@
         "CAMERA",
         "RECORD_AUDIO",
         "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "WRITE_EXTERNAL_STORAGE",
         "MODIFY_AUDIO_SETTINGS",
         "INTERNET",
         "ACCESS_NETWORK_STATE",
         "BLUETOOTH",
         "BLUETOOTH_CONNECT",
-        "WAKE_LOCK"
+        "WAKE_LOCK",
+        "POST_NOTIFICATIONS",
+        "VIBRATE",
+        "USE_FULL_SCREEN_INTENT",
+        "SCHEDULE_EXACT_ALARM"
       ]
     },
     "web": {
@@ -74,6 +80,21 @@
         {
           "cameraPermission": "Show your video on calls and send photos in chats",
           "microphonePermission": "Talk on voice and video calls and record voice messages"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#FF5E00"
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Save photos and videos you receive to your gallery",
+          "savePhotosPermission": "Save received media to your gallery",
+          "isAccessMediaLocationEnabled": false
         }
       ]
     ],

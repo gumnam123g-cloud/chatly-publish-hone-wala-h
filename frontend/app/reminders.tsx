@@ -1,11 +1,19 @@
-import { useState, useCallback } from "react";
-import { View, ScrollView, Pressable, Modal, StyleSheet } from "react-native";
+import { useState, useCallback, useEffect } from "react";
+import { View, ScrollView, Pressable, Modal, StyleSheet, Keyboard, Platform } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme, spacing, radius } from "@/src/theme";
 import { AppText, Icon, Card, EmptyState, Loading, Input, Button, useToast } from "@/src/ui";
 import { StackHeader } from "@/src/Header";
 import { api } from "@/src/api";
+import { scheduleLocalReminder } from "@/src/notifications";
+
+function parseWhen(s: string): Date | null {
+  if (!s?.trim()) return null;
+  const t = Date.parse(s);
+  if (!isNaN(t)) return new Date(t);
+  return null; // natural-language phrases are stored as-is; only ISO/parseable dates schedule a local notification
+}
 
 export default function Reminders() {
   const { colors } = useTheme();
@@ -16,6 +24,16 @@ export default function Reminders() {
   const [addOpen, setAddOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [when, setWhen] = useState("");
+  // Scoped keyboard handling (Reminder page only): no autoFocus; sheet rises above keyboard.
+  const [kb, setKb] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const s = Keyboard.addListener(showEvt, (e) => setKb(e.endCoordinates?.height || 0));
+    const h = Keyboard.addListener(hideEvt, () => setKb(0));
+    return () => { s.remove(); h.remove(); };
+  }, []);
+  const closeAdd = () => { Keyboard.dismiss(); setAddOpen(false); };
 
   const load = useCallback(async () => {
     try { const res = await api.get("/reminders"); setItems(res.reminders); } catch {} finally { setLoading(false); }
@@ -26,8 +44,14 @@ export default function Reminders() {
   const del = async (id: string) => { setItems((p) => p.filter((x) => x.id !== id)); try { await api.del(`/reminders/${id}`); } catch {} };
   const add = async () => {
     if (!title.trim()) return;
-    try { await api.post("/reminders", { title: title.trim(), remind_at: when.trim() || null }); setTitle(""); setWhen(""); setAddOpen(false); load(); toast.show("Reminder set", "success"); }
-    catch { toast.show("Failed", "error"); }
+    Keyboard.dismiss();
+    try {
+      const res = await api.post<{ reminder?: any }>("/reminders", { title: title.trim(), remind_at: when.trim() || null });
+      // Schedule a real local notification if the "when" is a concrete date/time.
+      const at = parseWhen(when);
+      if (at) { try { await scheduleLocalReminder(res?.reminder?.id || String(Date.now()), "Reminder", title.trim(), at); } catch {} }
+      setTitle(""); setWhen(""); setAddOpen(false); load(); toast.show("Reminder set", "success");
+    } catch { toast.show("Failed", "error"); }
   };
 
   return (
@@ -52,12 +76,12 @@ export default function Reminders() {
         </ScrollView>
       )}
 
-      <Modal visible={addOpen} transparent animationType="slide" onRequestClose={() => setAddOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={() => setAddOpen(false)} />
-        <View style={[styles.sheet, { backgroundColor: colors.card, paddingBottom: insets.bottom + spacing.lg }]}>
+      <Modal visible={addOpen} transparent animationType="slide" onRequestClose={closeAdd}>
+        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={closeAdd} />
+        <View style={[styles.sheet, { backgroundColor: colors.card, bottom: kb, paddingBottom: kb > 0 ? spacing.lg : insets.bottom + spacing.lg }]}>
           <AppText weight="bold" size="lg" style={{ marginBottom: spacing.md }}>New Reminder</AppText>
           <Input testID="reminder-title-input" label="Remind me to" value={title} onChangeText={setTitle} placeholder="e.g. Reply to Rahul" />
-          <Input testID="reminder-when-input" label="When (optional)" value={when} onChangeText={setWhen} placeholder="e.g. Tomorrow 9 AM" autoCapitalize="none" />
+          <Input testID="reminder-when-input" label="When (optional)" value={when} onChangeText={setWhen} placeholder="e.g. 2025-08-20 09:00" autoCapitalize="none" />
           <Button testID="save-reminder" title="Set Reminder" onPress={add} />
         </View>
       </Modal>

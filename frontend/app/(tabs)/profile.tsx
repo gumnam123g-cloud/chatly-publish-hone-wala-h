@@ -102,9 +102,20 @@ export default function Profile() {
     } finally { setSaving(false); }
   };
 
+  const [deleting, setDeleting] = useState(false);
   const doDelete = async () => {
-    try { await api.del("/auth/me"); await logout(); router.replace("/(auth)/login"); }
-    catch { toast.show("Failed", "error"); }
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      // Full account deletion: Firebase Auth user + all Mongo data + Storage media + mirror.
+      await api.del("/account");
+      setConfirmDelete(false);
+      await logout();
+      router.replace("/(auth)/login");
+    } catch (e: any) {
+      // Only report success if it actually completed; otherwise keep the user in place.
+      toast.show(e?.message || "Couldn't delete your account. Please try again.", "error");
+    } finally { setDeleting(false); }
   };
 
   const modes: any[] = [["light", "sunny-outline"], ["dark", "moon-outline"], ["system", "contrast-outline"]];
@@ -212,7 +223,7 @@ export default function Profile() {
           <View style={{ backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.xl, width: "100%" }}>
             <AppText weight="bold" size="lg" center>Delete account?</AppText>
             <AppText muted center style={{ marginTop: spacing.sm, marginBottom: spacing.lg }}>This will deactivate your account and data. This cannot be undone.</AppText>
-            <Button testID="confirm-delete" title="Delete Account" variant="danger" onPress={doDelete} />
+            <Button testID="confirm-delete" title="Delete Account" variant="danger" onPress={doDelete} loading={deleting} />
             <Pressable onPress={() => setConfirmDelete(false)} style={{ marginTop: spacing.md, alignItems: "center" }}><AppText weight="semibold">Cancel</AppText></Pressable>
           </View>
         </View>

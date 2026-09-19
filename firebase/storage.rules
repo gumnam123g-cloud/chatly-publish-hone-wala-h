@@ -1,0 +1,25 @@
+rules_version = '2';
+// Chatly Storage security rules.
+// Deploy:  firebase deploy --only storage
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() { return request.auth != null; }
+
+    // A user may only write under their own prefix; capped file sizes.
+    match /users/{userId}/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId
+                   && request.resource.size < 210 * 1024 * 1024; // 210MB ceiling
+    }
+
+    // Status media: owner writes under their prefix; signed-in users may read.
+    match /status/{userId}/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId
+                   && request.resource.size < 210 * 1024 * 1024;
+    }
+
+    match /{allPaths=**} { allow read, write: if false; }
+  }
+}

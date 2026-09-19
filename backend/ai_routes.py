@@ -116,21 +116,29 @@ async def smart_reply(body: SmartReplyBody, user: dict = Depends(get_current_use
 # ---------------- Message actions ----------------
 class MsgActionBody(BaseModel):
     text: str
-    action: str  # rewrite/improve/grammar/translate/summarize/explain/shorten/expand/smart_reply
+    action: str  # rewrite/improve/grammar/translate/summarize/explain/shorten/expand/reply/smart_reply
     tone: str | None = None
-    target_lang: str | None = None
+    target_lang: str | None = None   # translation target
+    out_lang: str | None = None      # per-action output language for summarize/explain/reply
+    context: str | None = None       # recent conversation context for reply drafts
 
 
 @router.post("/message-action")
 async def message_action(body: MsgActionBody, user: dict = Depends(get_current_user)):
-    a = body.action
+    a = (body.action or "").strip()
+    out_lang = (body.out_lang or "").strip()
+    tgt = (body.target_lang or body.out_lang or "English").strip() or "English"
+    lang_clause = f" Write the output in {out_lang}." if out_lang else " Match the language of the input."
+
     instructions = {
         "rewrite": "Rewrite the following message to be clearer and better while keeping the meaning.",
         "improve": "Improve the wording and flow of the following message.",
         "grammar": "Fix grammar and spelling in the following message. Return only the corrected text.",
-        "translate": f"Translate the following message to {body.target_lang or 'English'}.",
-        "summarize": "Summarize the following message in one short line.",
-        "explain": "Explain what the following message means in simple terms.",
+        "translate": (f"Detect the source language automatically, then translate the message to {tgt}. "
+                      f"Preserve emojis, numbers, names, URLs and formatting exactly. "
+                      f"Do NOT summarize, explain or add anything. Return ONLY the translated text."),
+        "summarize": f"Summarize the following message in one short, faithful line.{lang_clause}",
+        "explain": f"Explain what the following message means in simple, clear terms.{lang_clause}",
         "shorten": "Make the following message shorter and more direct.",
         "expand": "Expand the following message with a bit more detail and politeness.",
         "professional": "Rewrite the following message in a professional tone.",
@@ -140,14 +148,26 @@ async def message_action(body: MsgActionBody, user: dict = Depends(get_current_u
         "firm": "Rewrite the following message in a firm, direct tone.",
         "apologetic": "Rewrite the following message in an apologetic tone.",
     }
+
+    if a == "reply":
+        tone = (body.tone or "friendly").strip()
+        ctx = f"\n\nConversation context (most recent last):\n{body.context}" if body.context else ""
+        instr = (f"Draft a natural reply to the incoming message below. Use a {tone} tone.{lang_clause} "
+                 f"Base it on the conversation context if provided. Return ONLY the reply text, no quotes.{ctx}")
+        result = await ai_complete(
+            "You are a helpful reply-drafting assistant. Never invent facts. Return only the reply text.",
+            f"{instr}\n\nIncoming message:\n{body.text}", temperature=0.6, max_tokens=600,
+        )
+        return {"result": result.strip(), "action": a, "out_lang": out_lang or None}
+
     instr = instructions.get(a, "Rewrite the following message.")
     if body.tone and a in ("rewrite", "improve"):
         instr += f" Use a {body.tone} tone."
     result = await ai_complete(
         "You are a writing assistant. Return only the result text, no preamble, no quotes.",
-        f"{instr}\n\nMessage:\n{body.text}", temperature=0.5, max_tokens=800,
+        f"{instr}\n\nMessage:\n{body.text}", temperature=0.4, max_tokens=1000,
     )
-    return {"result": result.strip()}
+    return {"result": result.strip(), "action": a, "out_lang": (tgt if a == "translate" else out_lang) or None}
 
 
 # ---------------- Chat Brain (summary / decisions / timeline) ----------------
@@ -155,6 +175,7 @@ class ChatBrainBody(BaseModel):
     chat_id: str
     kind: str = "summary"  # summary/decisions/timeline/important/pending/find
     query: str | None = None
+    out_lang: str | None = None  # output language for the result
 
 
 @router.post("/chat-brain")
@@ -165,21 +186,23 @@ async def chat_brain(body: ChatBrainBody, user: dict = Depends(get_current_user)
     if not transcript.strip():
         return {"kind": body.kind, "result": "There are no messages in this conversation yet."}
     kind = body.kind
+    lang = (body.out_lang or "").strip()
+    lang_clause = f" Write the entire response in {lang}." if lang else ""
     if kind == "summary":
-        prompt = f"Summarize this conversation clearly in a few bullet points.\n\n{transcript}"
+        prompt = f"Summarize this conversation clearly in a few bullet points.{lang_clause}\n\n{transcript}"
     elif kind == "decisions":
-        prompt = f"List the key decisions made in this conversation. If none, say so.\n\n{transcript}"
+        prompt = f"List the key decisions made in this conversation. If none, say so.{lang_clause}\n\n{transcript}"
     elif kind == "timeline":
-        prompt = f"Build a short chronological timeline of key events in this conversation (date - event).\n\n{transcript}"
+        prompt = f"Build a short chronological timeline of key events (date - event).{lang_clause}\n\n{transcript}"
     elif kind == "important":
-        prompt = f"List the most important messages/points from this conversation.\n\n{transcript}"
+        prompt = f"List the most important messages/points from this conversation.{lang_clause}\n\n{transcript}"
     elif kind == "pending":
-        prompt = f"List pending replies and open questions the user still needs to respond to.\n\n{transcript}"
+        prompt = f"List pending replies and open questions the user still needs to respond to.{lang_clause}\n\n{transcript}"
     elif kind == "find" and body.query:
         prompt = (f"Answer this question using ONLY the conversation below. Quote the relevant message and its "
-                  f"timestamp as the source. If not found, say you couldn't find it.\n\nQuestion: {body.query}\n\n{transcript}")
+                  f"timestamp as the source. If not found, say you couldn't find it.{lang_clause}\n\nQuestion: {body.query}\n\n{transcript}")
     else:
-        prompt = f"Summarize this conversation.\n\n{transcript}"
+        prompt = f"Summarize this conversation.{lang_clause}\n\n{transcript}"
     result = await ai_complete(CHATLY_SYSTEM, prompt, temperature=0.4, max_tokens=1200)
     return {"kind": kind, "result": result.strip()}
 

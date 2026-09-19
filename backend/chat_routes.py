@@ -175,7 +175,7 @@ async def get_messages(chat_id: str, user: dict = Depends(get_current_user),
     chat = await db.chats.find_one({"chat_id": chat_id, "participants": user["user_id"]})
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found.")
-    q = {"chat_id": chat_id}
+    q = {"chat_id": chat_id, "deleted_for": {"$ne": user["user_id"]}}
     if before:
         q["created_at"] = {"$lt": before}
     cursor = db.messages.find(q, {"_id": 0}).sort("created_at", -1).limit(limit)
@@ -190,7 +190,7 @@ async def get_messages(chat_id: str, user: dict = Depends(get_current_user),
 
 
 class SendBody(BaseModel):
-    text: str = Field(min_length=1, max_length=6000)
+    text: str = Field(min_length=1, max_length=20000)
     type: str = "text"
     reply_to: str | None = None
 
@@ -269,6 +269,23 @@ async def send_message(chat_id: str, body: SendBody, user: dict = Depends(get_cu
             raise HTTPException(status_code=403, detail="You can't send messages in this chat.")
     msg = await _persist_message(chat_id, user["user_id"], body.text.strip(), body.type, body.reply_to)
     await manager.send_to_users(others, {"type": "message", "chat_id": chat_id, "message": msg})
+    # Real FCM push to recipients who are not muted and are not bots (skip the sender).
+    try:
+        from firebase_routes import push_to_user
+        muted = set(chat.get("muted_by", []))
+        preview = (body.text.strip()[:120]) if body.type == "text" else f"Sent a {body.type}"
+        for oid in others:
+            if oid in muted:
+                continue
+            odoc = await db.users.find_one({"user_id": oid}, {"_id": 0, "is_bot": 1})
+            if odoc and odoc.get("is_bot"):
+                continue
+            asyncio.create_task(push_to_user(
+                oid, user.get("name", "New message"), preview,
+                {"type": "chat_message", "chat_id": chat_id, "message_id": msg["message_id"],
+                 "sender_id": user["user_id"], "channel_id": "messages"}))
+    except Exception as _e:
+        pass
     # trigger persona reply for bot contacts
     for oid in others:
         other = await db.users.find_one({"user_id": oid})
@@ -340,19 +357,30 @@ async def star(message_id: str, user: dict = Depends(get_current_user)):
 
 
 @router.delete("/messages/{message_id}")
-async def delete_message(message_id: str, user: dict = Depends(get_current_user)):
+async def delete_message(message_id: str, user: dict = Depends(get_current_user),
+                         scope: str = Query("everyone")):
+    """scope='me' hides the message only for the requesting user (delete for me).
+    scope='everyone' tombstones it for all participants (sender only)."""
     msg = await db.messages.find_one({"message_id": message_id})
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found.")
+    chat = await db.chats.find_one({"chat_id": msg["chat_id"], "participants": user["user_id"]})
+    if not chat:
+        raise HTTPException(status_code=403, detail="Not allowed.")
+
+    if scope == "me":
+        await db.messages.update_one({"message_id": message_id},
+                                     {"$addToSet": {"deleted_for": user["user_id"]}})
+        return {"status": "deleted", "scope": "me"}
+
+    # delete for everyone -> only the original sender may do this
     if msg["sender_id"] != user["user_id"]:
-        raise HTTPException(status_code=403, detail="You can only delete your own messages.")
+        raise HTTPException(status_code=403, detail="You can only delete your own messages for everyone.")
     await db.messages.update_one({"message_id": message_id},
                                  {"$set": {"deleted": True, "text": "This message was deleted"}})
-    chat = await db.chats.find_one({"chat_id": msg["chat_id"]})
-    if chat:
-        await manager.send_to_users(chat["participants"],
-                                    {"type": "deleted", "chat_id": msg["chat_id"], "message_id": message_id})
-    return {"status": "deleted"}
+    await manager.send_to_users(chat["participants"],
+                                {"type": "deleted", "chat_id": msg["chat_id"], "message_id": message_id})
+    return {"status": "deleted", "scope": "everyone"}
 
 
 class EditBody(BaseModel):

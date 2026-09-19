@@ -78,3 +78,17 @@ Build "Chatly AI Messenger" — an AI-native real-time messaging + personal AI +
 - Live transcription: each participant records own mic in 8s chunks (web MediaRecorder + VAD; native expo-audio recorder loop) -> POST /api/calls/{id}/transcript-chunk -> Whisper (auto language EN/HI/Hinglish) -> speaker-labelled segments merged into call.transcript -> WS call_transcript to both sides. Privacy toggles enforced server-side (403). Call Intelligence works on the live transcript right after hang-up.
 - Fixed pre-existing media_service.transcribe_audio bug (path string passed to Whisper client) which had broken all voice transcription.
 - Group calls remain signaling-only (banner shown); planned for a later phase.
+
+## Implemented — Phase 9 & 10 (2025-08): Firebase integration + messaging/AI upgrades
+- Firebase Admin on FastAPI (firebase_service.py): Firestore, Storage, FCM send, ID-token verify, user mirror, account cleanup. Live-verified (ready:true). SA JSON server-only (git-ignored).
+- New endpoints: /api/firebase/status, /api/fcm/register|unregister, /api/auth/firebase (ID-token→JWT, rejects anonymous), /api/auth/firebase-token (custom token bridge), DELETE /api/account (full Firebase Auth + Mongo + Storage + mirror cleanup), /api/auth/username-available.
+- QR "user not found" ROOT-CAUSE FIX: deep link was sent as a URL path param (%2F broke routing). New /api/users/by-qr?code= + {code:path} + robust token extractor (backend + scan.tsx).
+- AI: per-action output language + tone; real Reply Draft; translate auto-detect; chat-brain out_lang.
+- Messaging: delete-for-me / delete-for-everyone; long messages (20k); FCM push on new message (skip sender/bot/muted).
+- Status: made PERMANENT (no 24h expiry), video limit 200MB.
+- Client: firebase JS SDK (src/firebase.ts, custom-token sign-in), notifications (src/notifications.ts, FCM + local reminders), gallery auto-save (src/gallery.ts, images/videos only), left/right swipe tab nav, scoped Task/Reminder keyboard fix, account-deletion UI → DELETE /api/account.
+- Firebase artifacts delivered in /app/firebase: firestore.rules, storage.rules, firestore.indexes.json, README.
+- Config: firebase-admin.json (backend), EXPO_PUBLIC_FIREBASE_* (frontend .env), app.json plugins (expo-notifications, expo-media-library) + Android permissions (POST_NOTIFICATIONS, VIBRATE, USE_FULL_SCREEN_INTENT, SCHEDULE_EXACT_ALARM, READ_MEDIA_VIDEO).
+- Native-only (code complete, verify on APK): FCM push delivery (bg/terminated), WebRTC media + native incoming-call UI/ringtone, background/closed reminders, gallery save, QR camera.
+- OUTSTANDING user action: enable Firebase Storage bucket (still not provisioned — media upload blocked until done); add Google SHA-1/256 after first APK build.
+

@@ -1,9 +1,11 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { Platform } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
 import { storage } from "@/src/utils/storage";
 import { api, TOKEN_KEY } from "@/src/api";
+import { signInFirebaseWithCustomToken, signOutFirebase } from "@/src/firebase";
+import { registerPushToken, unregisterPushToken } from "@/src/notifications";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -45,6 +47,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUserState] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const pushTokenRef = useRef<string | null>(null);
+
+  // When authenticated, bring up the real Firebase session (custom token) and register
+  // this device for FCM push. Both fail-soft so they never block the app.
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.get<{ firebase_token: string }>("/auth/firebase-token");
+        if (!cancelled && r?.firebase_token) await signInFirebaseWithCustomToken(r.firebase_token);
+      } catch { /* Firebase optional; app still works on JWT */ }
+      try {
+        const tok = await registerPushToken();
+        if (tok) pushTokenRef.current = tok;
+      } catch { /* push optional (native only) */ }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
 
   const persistSession = async (t: string, u: User) => {
     await storage.secureSet(TOKEN_KEY, t);
@@ -168,6 +189,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    try { await unregisterPushToken(pushTokenRef.current); } catch {}
+    try { await signOutFirebase(); } catch {}
+    pushTokenRef.current = null;
     await storage.secureRemove(TOKEN_KEY);
     await storage.removeItem(USER_KEY);
     setToken(null);

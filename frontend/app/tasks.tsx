@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { View, ScrollView, Pressable, Modal, StyleSheet } from "react-native";
+import { useState, useCallback, useEffect } from "react";
+import { View, ScrollView, Pressable, Modal, StyleSheet, Keyboard, Platform } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme, spacing, radius } from "@/src/theme";
@@ -16,6 +16,17 @@ export default function Tasks() {
   const [addOpen, setAddOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
+  // Scoped keyboard handling (Task page only): raise the add-sheet above the keyboard.
+  // No autoFocus anywhere, so the keyboard only opens when the user taps a field.
+  const [kb, setKb] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const s = Keyboard.addListener(showEvt, (e) => setKb(e.endCoordinates?.height || 0));
+    const h = Keyboard.addListener(hideEvt, () => setKb(0));
+    return () => { s.remove(); h.remove(); };
+  }, []);
+  const closeAdd = () => { Keyboard.dismiss(); setAddOpen(false); };
 
   const load = useCallback(async () => {
     try { const res = await api.get("/tasks"); setTasks(res.tasks); } catch {} finally { setLoading(false); }
@@ -62,9 +73,9 @@ export default function Tasks() {
         </ScrollView>
       )}
 
-      <Modal visible={addOpen} transparent animationType="slide" onRequestClose={() => setAddOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={() => setAddOpen(false)} />
-        <View style={[styles.sheet, { backgroundColor: colors.card, paddingBottom: insets.bottom + spacing.lg }]}>
+      <Modal visible={addOpen} transparent animationType="slide" onRequestClose={closeAdd}>
+        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={closeAdd} />
+        <View style={[styles.sheet, { backgroundColor: colors.card, bottom: kb, paddingBottom: kb > 0 ? spacing.lg : insets.bottom + spacing.lg }]}>
           <AppText weight="bold" size="lg" style={{ marginBottom: spacing.md }}>New Task</AppText>
           <Input testID="task-title-input" label="Title" value={title} onChangeText={setTitle} placeholder="What needs doing?" />
           <Input testID="task-due-input" label="Due (optional)" value={due} onChangeText={setDue} placeholder="e.g. Friday" autoCapitalize="none" />

@@ -311,11 +311,56 @@ class ProfileBody(BaseModel):
 
 @router.put("/me")
 async def update_me(body: ProfileBody, user: dict = Depends(get_current_user)):
+    import re
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
+
+    # Username validation + global uniqueness (case-insensitive)
+    if "username" in updates:
+        uname = (updates["username"] or "").strip().lstrip("@")
+        reserved = {"admin", "chatly", "support", "root", "system", "me", "null", "undefined"}
+        if not re.fullmatch(r"[a-zA-Z0-9_.]{3,20}", uname):
+            raise HTTPException(status_code=400,
+                                detail="Username must be 3-20 characters: letters, numbers, _ or .")
+        if uname.lower() in reserved:
+            raise HTTPException(status_code=400, detail="That username is reserved.")
+        clash = await db.users.find_one({
+            "username": {"$regex": f"^{re.escape(uname)}$", "$options": "i"},
+            "user_id": {"$ne": user["user_id"]}, "deleted_at": None,
+        })
+        if clash:
+            raise HTTPException(status_code=409, detail="That username is already taken.")
+        updates["username"] = uname
+
+    if "name" in updates:
+        nm = (updates["name"] or "").strip()
+        if not nm:
+            raise HTTPException(status_code=400, detail="Name cannot be empty.")
+        updates["name"] = nm[:60]
+    if "bio" in updates:
+        updates["bio"] = (updates["bio"] or "")[:200]
+
     if updates:
         await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
     fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    try:
+        import firebase_service as fb
+        fb.mirror_user(fresh)
+    except Exception:
+        pass
     return {"user": _public_user(fresh)}
+
+
+@router.get("/username-available")
+async def username_available(u: str, user: dict = Depends(get_current_user)):
+    import re
+    uname = (u or "").strip().lstrip("@")
+    if not re.fullmatch(r"[a-zA-Z0-9_.]{3,20}", uname):
+        return {"available": False, "reason": "invalid"}
+    clash = await db.users.find_one({
+        "username": {"$regex": f"^{re.escape(uname)}$", "$options": "i"},
+        "user_id": {"$ne": user["user_id"]}, "deleted_at": None,
+    })
+    return {"available": not clash}
 
 
 @router.delete("/me")

@@ -1,4 +1,4 @@
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { LogBox } from "react-native";
@@ -15,14 +15,35 @@ import { ToastProvider } from "@/src/ui";
 import { CallProvider } from "@/src/calls";
 import { ErrorBoundary } from "@/src/ErrorBoundary";
 import { installGlobalErrorHandlers } from "@/src/globalErrors";
+import { configureNotificationHandler, ensureAndroidChannels, routeFromNotificationData } from "@/src/notifications";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
 installGlobalErrorHandlers();
+configureNotificationHandler();
 
 function ThemedStatusBar() {
   const { isDark } = useTheme();
   return <StatusBar style={isDark ? "light" : "dark"} />;
+}
+
+// Routes a tapped push notification to the right screen (foreground/background/cold-start).
+function NotificationRouter() {
+  const router = useRouter();
+  useEffect(() => {
+    let Notifications: any = null;
+    try { Notifications = require("expo-notifications"); } catch { return; }
+    ensureAndroidChannels();
+    const handle = (resp: any) => {
+      const data = resp?.notification?.request?.content?.data;
+      const route = routeFromNotificationData(data);
+      if (route) { try { router.push(route as any); } catch {} }
+    };
+    const sub = Notifications.addNotificationResponseReceivedListener(handle);
+    Notifications.getLastNotificationResponseAsync?.().then((r: any) => { if (r) handle(r); }).catch(() => {});
+    return () => { try { sub.remove(); } catch {} };
+  }, [router]);
+  return null;
 }
 
 export default function RootLayout() {
@@ -45,6 +66,7 @@ export default function RootLayout() {
                   <ToastProvider>
                     <CallProvider>
                       <ThemedStatusBar />
+                      <NotificationRouter />
                       <Stack screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
                         <Stack.Screen name="index" />
                         <Stack.Screen name="(auth)" />

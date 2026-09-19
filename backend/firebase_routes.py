@@ -84,6 +84,26 @@ async def push_to_user(user_id: str, title: str, body: str, data: dict | None = 
         logger.warning("push_to_user error: %s", e)
 
 
+@router.get("/auth/firebase-token")
+async def firebase_custom_token(user: dict = Depends(get_current_user)):
+    """Mint a Firebase custom token for the already-JWT-authenticated user so the client
+    can sign into Firebase Auth (signInWithCustomToken) and access Firestore/Storage under
+    the security rules (request.auth.uid == user_id). No anonymous auth involved."""
+    if not fb.is_ready():
+        raise HTTPException(status_code=503, detail="Firebase is temporarily unavailable.")
+    try:
+        from firebase_admin import auth as fb_auth
+        claims = {"name": user.get("name"), "username": user.get("username")}
+        token = fb_auth.create_custom_token(user["user_id"], claims)
+        # ensure the public mirror exists for search/QR
+        fb.mirror_user(user)
+        return {"firebase_token": token.decode("utf-8") if isinstance(token, bytes) else token,
+                "uid": user["user_id"]}
+    except Exception as e:
+        logger.warning("custom token error: %s", e)
+        raise HTTPException(status_code=503, detail="Could not initialise secure sync.")
+
+
 # ---------------- Firebase Auth bridge (Google / Email via Firebase) ----------------
 
 class FirebaseAuthBody(BaseModel):
