@@ -200,6 +200,8 @@ class SendBody(BaseModel):
     text: str = Field(min_length=1, max_length=20000)
     type: str = "text"
     reply_to: str | None = None
+    client_message_id: str | None = Field(default=None, min_length=8, max_length=120)
+    priority: str | None = Field(default=None, pattern="^(important|normal|low|action_required|follow_up_required)$")
     # Optional per-message expiry (feature #43). Sender sets a TTL in seconds
     # (1h=3600, 1d=86400, 7d=604800, or custom). Server converts to an absolute
     # ISO timestamp so the receiver's clock skew never matters. Expired messages
@@ -208,7 +210,12 @@ class SendBody(BaseModel):
 
 
 async def _persist_message(chat_id: str, sender_id: str, text: str, mtype: str = "text",
-                           reply_to: str | None = None, expires_at: str | None = None) -> dict:
+                           reply_to: str | None = None, expires_at: str | None = None,
+                           client_message_id: str | None = None, priority: str | None = None) -> dict:
+    if client_message_id:
+        existing = await db.messages.find_one({"chat_id": chat_id, "sender_id": sender_id, "client_message_id": client_message_id}, {"_id": 0})
+        if existing:
+            return existing
     msg = {
         "message_id": str(uuid.uuid4()),
         "chat_id": chat_id,
@@ -217,6 +224,9 @@ async def _persist_message(chat_id: str, sender_id: str, text: str, mtype: str =
         "type": mtype,
         "status": "sent",
         "reply_to": reply_to,
+        "client_message_id": client_message_id,
+        "priority": priority or "normal",
+        "priority_source": "manual" if priority else "default",
         "reactions": {},
         "starred_by": [],
         "read_by": [sender_id],
@@ -285,7 +295,10 @@ async def send_message(chat_id: str, body: SendBody, user: dict = Depends(get_cu
     if body.expires_in_seconds:
         from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         _expires_at = (_dt.now(_tz.utc) + _td(seconds=int(body.expires_in_seconds))).isoformat()
-    msg = await _persist_message(chat_id, user["user_id"], body.text.strip(), body.type, body.reply_to, expires_at=_expires_at)
+    existing = await db.messages.find_one({"chat_id": chat_id, "sender_id": user["user_id"], "client_message_id": body.client_message_id}, {"_id": 0}) if body.client_message_id else None
+    if existing:
+        return {"message": existing, "duplicate": True}
+    msg = await _persist_message(chat_id, user["user_id"], body.text.strip(), body.type, body.reply_to, expires_at=_expires_at, client_message_id=body.client_message_id, priority=body.priority)
     await manager.send_to_users(others, {"type": "message", "chat_id": chat_id, "message": msg})
     # Real FCM push to recipients who are not muted and are not bots (skip the sender).
     try:
@@ -310,6 +323,23 @@ async def send_message(chat_id: str, body: SendBody, user: dict = Depends(get_cu
         if other and other.get("is_bot"):
             asyncio.create_task(_demo_reply(chat_id, oid, user["user_id"]))
     return {"message": msg}
+
+
+@router.post("/sync/messages")
+async def sync_message(chat_id: str, body: SendBody, user: dict = Depends(get_current_user)):
+    """Idempotent offline outbox endpoint. client_message_id makes retries safe."""
+    return await send_message(chat_id, body, user)
+
+
+@router.get("/sync/pull")
+async def sync_pull(since: str | None = None, user: dict = Depends(get_current_user)):
+    chats = [c async for c in db.chats.find({"participants": user["user_id"]}, {"_id": 0, "chat_id": 1})]
+    ids = [c["chat_id"] for c in chats]
+    query: dict = {"chat_id": {"$in": ids}, "deleted_for": {"$ne": user["user_id"]}}
+    if since:
+        query["created_at"] = {"$gt": since}
+    cur = db.messages.find(query, {"_id": 0}).sort("created_at", 1).limit(500)
+    return {"messages": [m async for m in cur], "server_time": _now()}
 
 
 class ThemeBody(BaseModel):

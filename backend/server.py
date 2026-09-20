@@ -23,6 +23,8 @@ import feedback_routes
 import schedule_routes
 import templates_routes
 import insights_routes
+import push_routes
+import smart_features_routes
 from storage_service import init_storage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -69,6 +71,8 @@ app.include_router(feedback_routes.router)
 app.include_router(schedule_routes.router)
 app.include_router(templates_routes.router)
 app.include_router(insights_routes.router)
+app.include_router(push_routes.router)
+app.include_router(smart_features_routes.router)
 
 
 @app.websocket("/api/ws")
@@ -191,6 +195,10 @@ async def on_startup():
         logger.info("Object storage initialized")
     except Exception as e:
         logger.warning(f"Storage init deferred: {e}")
+    try:
+        calls_routes.start_call_sweeper()
+    except Exception as e:
+        logger.warning(f"Call sweeper init deferred: {e}")
     try:
         schedule_routes.start_scheduler()
     except Exception as e:

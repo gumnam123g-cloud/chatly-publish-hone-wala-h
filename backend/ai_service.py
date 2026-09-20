@@ -192,48 +192,17 @@ async def _sarvam_chat(messages: list[dict], temperature: float = 0.5, max_token
     return await _run_with_retry("sarvam", _do)
 
 
-async def _emergent_chat(messages: list[dict]) -> str:
-    """Fallback using the Emergent universal key (Claude)."""
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-    system = "You are Chatly, a helpful AI assistant."
-    convo = []
-    for m in messages:
-        if m["role"] == "system":
-            system = m["content"]
-        else:
-            convo.append(m)
-    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id="chatly-fallback", system_message=system).with_model(
-        "anthropic", "claude-sonnet-4-6"
-    )
-    # send the last user turn (history is small for our use-cases)
-    text = "\n".join([f"{m['role']}: {m['content']}" for m in convo]) if len(convo) > 1 else convo[-1]["content"]
-    resp = await chat.send_message(UserMessage(text=text))
-    return (resp or "").strip()
-
-
 async def ai_chat(messages: list[dict], temperature: float = 0.5, max_tokens: int = 1200) -> str:
-    """Primary Sarvam, fallback Emergent. `messages` is OpenAI-style list of {role, content}."""
-    try:
-        out = await _sarvam_chat(messages, temperature, max_tokens)
-        if not out:  # reasoning consumed budget — retry once with more headroom
-            out = await _sarvam_chat(messages, temperature, max_tokens + 2000)
-        if out:
-            return out
-        raise ValueError("empty content")
-    except Exception as e:
-        logger.warning(f"Sarvam unavailable ({e}); using Emergent fallback")
-        try:
-            out = await _emergent_chat(messages)
-            if out:
-                return out
-            raise ValueError("empty fallback content")
-        except Exception as e2:
-            logger.error(f"AI fallback also failed: {e2}")
-            raise AIServiceError(
-                "Chatly AI is temporarily unavailable. Please try again in a moment.",
-                category="ai_unavailable",
-            ) from e2
+    """Sarvam AI only — no cross-provider fallback. Retries with headroom on empty completions."""
+    out = await _sarvam_chat(messages, temperature, max_tokens)
+    if not out:  # reasoning consumed budget — retry once with more headroom
+        out = await _sarvam_chat(messages, temperature, max_tokens + 2000)
+    if out:
+        return out
+    raise AIServiceError(
+        "Chatly AI could not produce a response. Please try again.",
+        category="empty_response", provider="sarvam",
+    )
 
 
 async def ai_complete(system: str, prompt: str, temperature: float = 0.5, max_tokens: int = 1200) -> str:

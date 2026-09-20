@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { View, ScrollView, Pressable, StyleSheet } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect } from "expo-router";
 import { useTheme, spacing, radius } from "@/src/theme";
 import { AppText, Avatar, Icon, Button, Loading, useToast } from "@/src/ui";
 import { StackHeader } from "@/src/Header";

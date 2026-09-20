@@ -1,7 +1,8 @@
+import asyncio
 import os
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel
 
@@ -64,6 +65,31 @@ async def start_call(body: StartCallBody, user: dict = Depends(get_current_user)
                "caller_name": caller_name, "caller_avatar": user.get("avatar")}}
     for cid in callees:
         await manager.send_to_user(cid, payload)
+    # High-priority FCM so the device wakes up and can ring even from background/killed state.
+    try:
+        from firebase_routes import push_to_user
+        for cid in callees:
+            odoc = await db.users.find_one({"user_id": cid}, {"_id": 0, "is_bot": 1})
+            if odoc and odoc.get("is_bot"):
+                continue
+            asyncio.create_task(push_to_user(
+                cid,
+                f"Incoming {body.type} call",
+                caller_name,
+                {
+                    "type": "incoming_call",
+                    "call_id": call_id,
+                    "chat_id": body.chat_id,
+                    "call_type": body.type,
+                    "caller_id": user["user_id"],
+                    "caller_name": caller_name,
+                    "channel_id": "calls",
+                    "priority": "high",
+                    "full_screen_intent": "true",
+                },
+            ))
+    except Exception as _e:
+        logger.debug("call push skipped: %s", _e)
     doc.pop("_id", None)
     return {"call": doc, "chat_type": chat["type"]}
 
@@ -372,3 +398,41 @@ async def search_calls(body: CallSearchBody, user: dict = Depends(get_current_us
         if score:
             out.append(await _call_view(c, user["user_id"]))
     return {"calls": out[:20]}
+
+
+# ---------------------------------------------------------------------------
+# Call sweeper: auto-mark ringing calls as `missed` after MAX_RING_SECONDS so
+# stale call rows don't clutter the history when the callee never picks up.
+
+MAX_RING_SECONDS = 45
+
+
+async def _sweep_missed_calls():
+    while True:
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=MAX_RING_SECONDS)).isoformat()
+            cursor = db.calls.find({"status": "ringing", "started_at": {"$lt": cutoff}}, {"_id": 0})
+            async for call in cursor:
+                await db.calls.update_one(
+                    {"call_id": call["call_id"], "status": "ringing"},
+                    {"$set": {"status": "missed", "ended_at": datetime.now(timezone.utc).isoformat()}},
+                )
+                for pid in call.get("participants", []):
+                    try:
+                        await manager.send_to_user(pid, {"type": "call_ended", "call_id": call["call_id"],
+                                                          "duration": 0, "final": "missed"})
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"call sweeper tick failed: {e}")
+        await asyncio.sleep(10)
+
+
+def start_call_sweeper() -> None:
+    """Launched by server startup — sweeps ringing calls that were never answered."""
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(_sweep_missed_calls())
+        logger.info("Call sweeper started (%ss timeout)", MAX_RING_SECONDS)
+    except Exception as e:
+        logger.warning(f"Could not start call sweeper: {e}")

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { View, FlatList, Pressable, RefreshControl, TextInput, StyleSheet, Modal } from "react-native";
 import { useRouter } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme, spacing, radius, fontSize } from "@/src/theme";
 import { AppText, Avatar, Icon, EmptyState, Skeleton } from "@/src/ui";

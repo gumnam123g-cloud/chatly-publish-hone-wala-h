@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { View, ScrollView, Pressable, Modal, StyleSheet, ActivityIndicator, Keyboard, Platform } from "react-native";
 import { useRouter } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme, spacing, radius } from "@/src/theme";
 import { AppText, Icon, Card, EmptyState, Loading, Input, Button, useToast } from "@/src/ui";

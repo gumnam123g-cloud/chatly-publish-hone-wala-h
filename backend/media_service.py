@@ -1,5 +1,11 @@
-"""Voice transcription (Whisper), image vision/OCR, and document text extraction.
-All processing server-side via the Emergent universal key. Never exposed to the app."""
+"""Voice transcription, image OCR/vision, and document text extraction — Sarvam AI only.
+
+All AI processing goes through Sarvam AI (per user directive). No OpenAI / Anthropic / Gemini.
+
+- Audio transcription: Sarvam Speech-to-Text (saaras:v3, auto-detect Hindi/English/Hinglish).
+- Image OCR/vision: Sarvam Vision (Indic-first VLM).
+- Document text: local extraction with pypdf / python-docx / openpyxl.
+"""
 import os
 import io
 import base64
@@ -7,31 +13,60 @@ import logging
 import tempfile
 from pathlib import Path
 
+import httpx
+
 logger = logging.getLogger(__name__)
-EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
+
+SARVAM_API_KEY = os.environ["SARVAM_API_KEY"]
+SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
+SARVAM_VISION_URL = "https://api.sarvam.ai/v1/vision"
+
+# Sarvam BCP-47 codes we accept from clients (everything else -> auto-detect).
+_LANG_MAP = {
+    "en": "en-IN", "en-in": "en-IN", "english": "en-IN",
+    "hi": "hi-IN", "hi-in": "hi-IN", "hindi": "hi-IN",
+    "bn": "bn-IN", "gu": "gu-IN", "kn": "kn-IN", "ml": "ml-IN",
+    "mr": "mr-IN", "od": "od-IN", "pa": "pa-IN", "ta": "ta-IN",
+    "te": "te-IN",
+}
 
 
-async def transcribe_audio(audio_bytes: bytes, filename: str, language: str = "en") -> str:
-    from emergentintegrations.llm.openai import OpenAISpeechToText
+def _resolve_lang(language: str | None) -> str:
+    """Return a Sarvam-compatible BCP-47 code, or 'unknown' for Hinglish/auto."""
+    if not language:
+        return "unknown"
+    key = language.strip().lower()
+    if key in ("auto", "unknown", "hinglish"):
+        return "unknown"
+    return _LANG_MAP.get(key, "unknown")
+
+
+async def transcribe_audio(audio_bytes: bytes, filename: str, language: str = "auto") -> str:
+    """Transcribe an audio clip via Sarvam STT. Auto-detects Hindi/English/Hinglish."""
     suffix = Path(filename).suffix.lower() or ".m4a"
-    if suffix not in {".m4a", ".mp3", ".wav", ".webm", ".mp4", ".mpeg", ".mpga", ".aac", ".ogg"}:
+    # Normalise to something Sarvam accepts.
+    if suffix not in {".m4a", ".mp3", ".wav", ".webm", ".mp4", ".mpeg", ".mpga", ".aac", ".ogg", ".flac", ".opus", ".amr"}:
         suffix = ".m4a"
     tmp_name = None
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp.write(audio_bytes)
             tmp_name = tmp.name
-        stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
-        kwargs: dict = {"model": "whisper-1"}
-        # "auto" (or unknown) -> let Whisper detect the language (English/Hindi/Hinglish etc.)
-        if language in ("en", "hi"):
-            kwargs["language"] = language
-        # The underlying OpenAI client needs a real file object (a bare path string is rejected).
+
+        lang = _resolve_lang(language)
+        headers = {"api-subscription-key": SARVAM_API_KEY}
+
         with open(tmp_name, "rb") as fh:
-            result = await stt.transcribe(fh, **kwargs)
-        text = result if isinstance(result, str) else getattr(result, "text", None)
-        if text is None and isinstance(result, dict):
-            text = result.get("text", "")
+            files = {"file": (Path(filename or "audio").name, fh, "application/octet-stream")}
+            data = {"model": "saaras:v3", "language_code": lang, "with_timestamps": "false"}
+            async with httpx.AsyncClient(timeout=90) as client:
+                resp = await client.post(SARVAM_STT_URL, headers=headers, data=data, files=files)
+
+        if resp.status_code >= 400:
+            logger.warning("Sarvam STT %s: %s", resp.status_code, resp.text[:200])
+            resp.raise_for_status()
+        payload = resp.json() if resp.content else {}
+        text = payload.get("transcript") or payload.get("text") or ""
         return (text or "").strip()
     finally:
         if tmp_name:
@@ -39,25 +74,48 @@ async def transcribe_audio(audio_bytes: bytes, filename: str, language: str = "e
 
 
 async def image_qa(image_bytes: bytes, mime_type: str, question: str) -> str:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
-    from uuid import uuid4
+    """OCR / vision Q&A via Sarvam Vision. Understands English, Hindi and Hinglish."""
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"image-{uuid4()}",
-        system_message=(
-            "You analyze user-provided images (screenshots, invoices, photos). Read visible text "
-            "carefully with OCR. If text is unclear, say so; never invent missing values. "
-            "You understand English, Hindi and Hinglish."
+    body = {
+        "image": f"data:{mime_type or 'image/jpeg'};base64,{image_b64}",
+        "prompt": (
+            "Analyze this user-provided image (screenshot, invoice, photo). Read all visible text "
+            "with OCR. Preserve numbers, dates and amounts exactly; never invent missing values. "
+            "You understand English, Hindi and Hinglish. Answer the user's question below.\n\n"
+            f"Question: {question}"
         ),
-    ).with_model("openai", "gpt-4o")
-    msg = UserMessage(text=question, file_contents=[ImageContent(image_b64)])
-    result = await chat.send_message(msg)
-    return result if isinstance(result, str) else getattr(result, "text", str(result))
+    }
+    # Sarvam Vision accepts either the bearer or api-subscription-key header depending on
+    # the account. Try the subscription-key header first (same as STT), then fall back.
+    headers_variants = [
+        {"api-subscription-key": SARVAM_API_KEY, "Content-Type": "application/json"},
+        {"Authorization": f"Bearer {SARVAM_API_KEY}", "Content-Type": "application/json"},
+    ]
+    last: httpx.Response | None = None
+    async with httpx.AsyncClient(timeout=90) as client:
+        for h in headers_variants:
+            resp = await client.post(SARVAM_VISION_URL, headers=h, json=body)
+            last = resp
+            if resp.status_code < 400:
+                data = resp.json()
+                for key in ("answer", "response", "text", "output"):
+                    if isinstance(data.get(key), str):
+                        return data[key].strip()
+                # Some responses may nest content under choices.
+                choices = data.get("choices")
+                if isinstance(choices, list) and choices:
+                    msg = choices[0].get("message") or {}
+                    if isinstance(msg.get("content"), str):
+                        return msg["content"].strip()
+                return str(data)[:2000]
+    if last is not None:
+        logger.warning("Sarvam Vision %s: %s", last.status_code, last.text[:200])
+        last.raise_for_status()
+    return ""
 
 
 def extract_document_text(data: bytes, filename: str, mime: str) -> str:
-    """Best-effort text extraction from common document formats."""
+    """Best-effort text extraction from common document formats. Local only — no LLM."""
     ext = Path(filename).suffix.lower()
     try:
         if ext == ".pdf" or mime == "application/pdf":

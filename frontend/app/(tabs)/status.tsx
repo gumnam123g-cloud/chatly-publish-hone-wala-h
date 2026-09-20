@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { View, ScrollView, Pressable, Modal, RefreshControl, ActivityIndicator, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme, spacing, radius } from "@/src/theme";

@@ -92,3 +92,24 @@ Build "Chatly AI Messenger" — an AI-native real-time messaging + personal AI +
 - Native-only (code complete, verify on APK): FCM push delivery (bg/terminated), WebRTC media + native incoming-call UI/ringtone, background/closed reminders, gallery save, QR camera.
 - OUTSTANDING user action: enable Firebase Storage bucket (still not provisioned — media upload blocked until done); add Google SHA-1/256 after first APK build.
 
+## Implemented — Iteration 4 (2026-06): 24-feature pass on SDK 57 (Sarvam-only AI)
+- **Sarvam AI everywhere**: rewrote `media_service.py` to use Sarvam Speech-to-Text (saaras:v3, auto-detects Hindi/English/Hinglish) and Sarvam Vision (Indic VLM) for OCR. Removed Emergent/Claude LLM fallback from `ai_service.py` — Sarvam is now the SOLE AI provider for chat completions, transcription, and vision per user directive.
+- **Offline chat + messaging reliability**:
+  - New `/app/frontend/src/offlineChat.ts`: per-chat AsyncStorage cache (last 200 msgs), pending-message outbox keyed by stable `client_message_id`, `drainOutbox()` on reconnect, `pullSince()` catches up missed messages.
+  - Wired into `chat/[id].tsx` (instant hydrate from cache, queued send on failure, cache-upsert on receive) and `src/ws.tsx` (on WS reconnect: drain outbox + pull-since fanout to listeners).
+  - Backend already exposed `/api/sync/messages?chat_id=` (idempotent on `client_message_id`) and `/api/sync/pull?since=` — validated by 38/38 pytest run.
+- **Calls upgraded**:
+  - Cross-platform ringtone at `src/ringtone.ts` (expo-audio looping player on native, HTMLAudioElement on web, coordinated Vibration.vibrate) — plays on `incoming_call`, stopped on accept/reject/end.
+  - `calls_routes.py` now fires a high-priority FCM push (`type=incoming_call`, `full_screen_intent=true`, `channel_id=calls`) to callees on `POST /api/calls` so background/killed devices can wake and ring.
+  - Added `start_call_sweeper()` — every 10s marks ringing calls older than 45s as `missed` and notifies participants via WS.
+- **New AI screens (all confirm-first, no auto actions)**:
+  - `/app/frontend/app/smart-inbox.tsx` — priority-filter chips (Important / Action / Follow-up / Normal / Low) over GET /api/inbox/smart; per-message priority toggle via PATCH /api/messages/{id}/priority.
+  - `/app/frontend/app/autopilot.tsx` — AI Autopilot rules CRUD (name, enabled, summary, suggest_priority, suggest_reminder, suggest_follow_up, chat_ids) + Analyze-a-chat that returns suggestions; each suggestion has an explicit "Confirm & apply" button hitting POST /api/ai/autopilot/confirm — nothing is applied without the user tapping.
+  - `/app/frontend/app/catchup.tsx` — GET /api/ai/unread-catchup summary + important / action / questions sections.
+  - `/app/frontend/app/digest.tsx` — POST /api/ai/digest with daily/weekly toggle.
+  - `/app/frontend/app/followups.tsx` — GET /api/follow-ups + PUT /api/reminders/{id}/done.
+  - `/app/frontend/app/group-assistant/[id].tsx` — group summary + AI decision detection + create/vote/close polls (GET/POST /api/groups/{id}/decision-maker/polls/**). Linked from Group Info via "Group Assistant & Polls" button.
+  - All 6 screens wired into the Chatly-tab quick actions grid.
+- **SDK 57 migration cleanup**: `package.json` now on Expo SDK 57 / react-native 0.86.3. Fixed compile error by replacing `@react-navigation/native` `useFocusEffect` imports with `expo-router`'s equivalent (SDK 56+ dropped react-navigation compatibility). Metro bundle now builds successfully; app boots to Login and post-auth to the Chatly dashboard.
+- **Backend validation**: 38/38 pytest in `/app/backend/tests/test_iteration4_features.py` (iteration_4 report). Covers Auth, messaging idempotency, offline sync, priority + smart inbox, autopilot CRUD + analyze + confirm, catchup / digest / smart-reminder-suggest / follow-ups, group assistant + poll lifecycle, calls (start/accept/reject/end, ice-servers with Google STUN + Metered TURN), transcription/AI-summary via Sarvam, feedback + analytics allow-list, push registration guardrails, Firebase status, and auth-gate on 12 new endpoints.
+

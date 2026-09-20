@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { View, ScrollView, Pressable, Modal, StyleSheet } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme, spacing, radius } from "@/src/theme";
 import { AppText, Avatar, Icon, Card, Loading, Button, useToast } from "@/src/ui";
@@ -51,6 +51,7 @@ export default function GroupInfo() {
         </View>
 
         <Button testID="group-brain-button" title="Ask Group Brain" icon="sparkles" onPress={() => router.push({ pathname: "/chat/[id]", params: { id: String(id), name: group.name, group: "1" } })} />
+        <Button testID="group-assistant-button" title="Group Assistant & Polls" icon="checkmark-done-outline" variant="secondary" onPress={() => router.push({ pathname: "/group-assistant/[id]", params: { id: String(id), name: group.name } })} />
 
         <View>
           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>

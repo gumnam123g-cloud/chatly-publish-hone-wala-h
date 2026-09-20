@@ -1,0 +1,48 @@
+{
+  "summary": "Backend-only iteration 4 validating the 24-feature Chatly pass. 38 new pytest cases in /app/backend/tests/test_iteration4_features.py cover: auth extras (/auth/me, /auth/username-available auth-gate, /auth/session rejects invalid session_id, /auth/forgot-password 200 for known email), message idempotency via client_message_id on POST /api/chats/{id}/messages AND POST /api/sync/messages?chat_id= (repeat POST returns same message_id, only 1 DB row), offline pull GET /api/sync/pull (returns messages + server_time; since=future filters to empty), Priority + Smart Inbox (PATCH /api/messages/{id}/priority=important reflects in GET /api/inbox/smart?category=important; groups dict includes all 5 priority buckets), AI Autopilot rules CRUD (create/list/patch/delete), autopilot analyze + confirm (priority + reminder paths), smart features unread-catchup/digest/smart-reminder-suggest/follow-ups, Group AI assistant enforces group-only (400 for DM, 200 for group), decision-maker analyze + full poll lifecycle create/list/vote/switch-vote/close with winner surfaced in final_decision, invalid option_id -> 400, calls lifecycle voice/video start->accept->end and start->reject, GET /api/calls list, GET /api/calls/ice-servers returns Google STUN (stun.l.google.com) + Metered TURN (openrelay.metered.ca) with username+credential, transcript-text upload + retrieval, /calls/{id}/ai summary via Sarvam, feedback POST/GET/mine, analytics batch (accepted count for allowed events, rejected for unknown), push register 201/503 for self and 403 when spoofing another user_id, GET /api/firebase/status returns ready:true, all new endpoints reject unauth (401/403/422). Result: 38/38 PASSED (100%) in 9.75s. AI endpoints all responded within the 120s budget on this run so no 503 fallback path was exercised — that path is coded and asserted-accepted. Sarvam is the sole AI provider per env (SARVAM_API_KEY set, no OpenAI/Anthropic env).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/forgot-password", "issue": "Contract accepts 200 or 500 depending on whether the email provider (Emergent proxy) blocks the target domain. Consider ALWAYS returning 200 to avoid email-existence enumeration (currently it's 200 for known accounts but a provider outage would leak via 500)."},
+      {"endpoint": "GET /api/sync/pull", "issue": "Returns up to 500 messages with no cursor/hasMore field. Clients pulling long histories will silently truncate. Consider adding next_since or has_more to the payload."},
+      {"endpoint": "GET /api/inbox/smart", "issue": "Query returns up to 300 messages across ALL chats with no pagination; heavy accounts will render slowly. Add limit/before params."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4_features.py",
+    "/app/test_reports/pytest/iteration4_results.xml"
+  ],
+  "action_items": [
+    "(LOW) Return 200 from /auth/forgot-password regardless of provider success to avoid enumeration; log the provider error server-side instead of surfacing 500.",
+    "(LOW) Add pagination cursor (next_since / has_more) to /api/sync/pull and /api/inbox/smart to avoid silent truncation past 500/300 rows respectively.",
+    "(OPTIONAL) Expose Sarvam call latency in server logs on the AI endpoints (autopilot/analyze, /ai/digest, /ai/unread-catchup, /calls/{id}/ai) so slow Sarvam responses can be traced without a 502."
+  ],
+  "critical_code_review_comments": [
+    "chat_routes.send_message correctly implements client_message_id idempotency via a scoped find_one({chat_id, sender_id, client_message_id}) before persisting; POST /api/sync/messages delegates to the same handler so both paths are consistent — good.",
+    "smart_features_routes.confirm_autopilot separates suggestion_type into 'priority' (updates message) vs 'reminder'/'follow_up' (creates reminder). Bodies with an unknown suggestion_type are rejected at the Pydantic layer (regex pattern) — good defense.",
+    "smart_features_routes.vote_poll pulls the voter from ALL options first (options.$[].votes) then $addToSet on the chosen one — cleanly enforces one-vote-per-user with switch semantics. No race protection but acceptable for a demo poll surface.",
+    "calls_routes.ice_servers reads STUN_URLS/TURN_URLS from env with sensible defaults (Google STUN + Metered openrelay). Credentials are shipped unless the env explicitly clears them — matches the review spec (Metered free TURN + Google STUN).",
+    "feedback_routes has an explicit ALLOWED_EVENTS whitelist for /analytics/event and props are truncated to 120 chars, keys<=40 chars, max 16 keys — good privacy/DoS guard.",
+    "push_routes.register_push blocks spoofed user_id with 403 BEFORE calling the provider — verified by test.",
+    "smart_features_routes.group_assistant correctly 400s on non-group chats — verified by test."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4_features.py",
+    "/app/test_reports/pytest/iteration4_results.xml",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "success_rate": {
+    "backend": "100% (38/38 iteration-4 tests). AI endpoints (Sarvam) all replied within timeout on this run; the coded 503 fallback was not needed.",
+    "frontend": "N/A - backend-only testing per review request"
+  },
+  "seed_data_creation": "Created a transient TEST group chat via POST /api/groups (TEST_Iter4_Group_*) with demo + demo2, seeded 3 messages inside; created transient TEST calls, transcripts, feedback entries, autopilot rule/reminder/follow-up. All entries prefixed TEST_ where user-visible.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use demo@chatly.app / Demo1234 (and demo2@chatly.app / Demo1234). BASE URL from frontend/.env EXPO_PUBLIC_BACKEND_URL. Iteration-4 pytest lives at /app/backend/tests/test_iteration4_features.py (~10s, 38/38). Prior iteration tests remain valid: /app/backend/tests/test_chatly_api.py, test_phase12_features.py, test_phase3_calls.py. If Sarvam is slow, AI tests accept 200 OR 503 per review directive. POST /api/sync/messages MUST be called with chat_id as a QUERY param (not JSON) — matches server signature. Poll option_id is the stringified index of the option in the create payload ('0','1',...). Ice-servers ships Google STUN + Metered TURN (openrelayproject/openrelayproject) by default."
+}

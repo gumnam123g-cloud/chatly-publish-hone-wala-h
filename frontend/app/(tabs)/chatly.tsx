@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { View, ScrollView, Pressable, StyleSheet, RefreshControl } from "react-native";
 import { useRouter } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
@@ -14,6 +14,11 @@ const HERO = "https://images.unsplash.com/photo-1590959651373-a3db0f38a961?crop=
 
 const QUICK = [
   { key: "assistant", label: "Ask Anything", icon: "sparkles", route: "/assistant" },
+  { key: "smart-inbox", label: "Smart Inbox", icon: "filter-outline", route: "/smart-inbox" },
+  { key: "catchup", label: "Catch Up", icon: "layers-outline", route: "/catchup" },
+  { key: "digest", label: "Chat Digest", icon: "newspaper-outline", route: "/digest" },
+  { key: "autopilot", label: "AI Autopilot", icon: "flash-outline", route: "/autopilot" },
+  { key: "followups", label: "Follow-ups", icon: "return-up-forward-outline", route: "/followups" },
   { key: "ask-chats", label: "Ask Your Chats", icon: "chatbubble-ellipses-outline", route: "/ask-chats" },
   { key: "research", label: "Deep Research", icon: "globe-outline", route: "/research" },
   { key: "daily-brief", label: "Daily Brief", icon: "newspaper-outline", route: "/daily-brief" },

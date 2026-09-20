@@ -16,6 +16,7 @@ import {
 } from "@/src/rtc";
 import { startChunkedCapture, CaptureChunk } from "@/src/callCapture";
 import { useCallRecorder, setCallAudioMode, ensureMicPermission } from "@/src/useCallRecorder";
+import { startRingtone, stopRingtone } from "@/src/ringtone";
 
 type Call = any;
 type Segment = { id: string; speaker_id: string; speaker: string; text: string; at: string };
@@ -263,10 +264,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       setSpeaker(ev.call?.type === "video"); speakerRef.current = ev.call?.type === "video";
       setCamOff(ev.call?.type !== "video");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      startRingtone().catch(() => {});
       return;
     }
     if (!c || (ev.call_id && ev.call_id !== c.call_id)) return;
     if (ev.type === "call_accepted") {
+      stopRingtone().catch(() => {});
       await onConnected();
       if (roleRef.current === "caller" && isDm(c) && rtcAvailable) {
         if (!mediaReady.current) await acquireMedia(c.type);
@@ -284,8 +287,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       const seg: Segment = ev.segment;
       if (seg) setCaptions((prev) => (prev.some((s) => s.id === seg.id) ? prev : [...prev, seg]));
     } else if (ev.type === "call_rejected") {
+      stopRingtone().catch(() => {});
       setPhase("ended"); setTimeout(() => reset(), 1200);
     } else if (ev.type === "call_ended") {
+      stopRingtone().catch(() => {});
       setPhase("ended"); cleanupMedia();
       const cid = c?.call_id || ev.call_id;
       setTimeout(() => reset(ev.duration > 0 ? cid : undefined), 1200);
@@ -307,6 +312,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const accept = async () => {
     const c = callRef.current; if (!c) return;
+    stopRingtone().catch(() => {});
     try {
       await api.post(`/calls/${c.call_id}/accept`);
       await onConnected();
@@ -318,11 +324,13 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   };
   const reject = async () => {
     const c = callRef.current; if (!c) return;
+    stopRingtone().catch(() => {});
     try { await api.post(`/calls/${c.call_id}/reject`); } catch {}
     reset();
   };
   const end = async () => {
     const c = callRef.current; if (!c) return;
+    stopRingtone().catch(() => {});
     cleanupMedia();
     try { const r = await api.post<{ duration: number }>(`/calls/${c.call_id}/end`); reset(r.duration > 0 ? c.call_id : undefined); }
     catch { reset(); }
