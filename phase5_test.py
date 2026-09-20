@@ -8,7 +8,7 @@ import sys
 from typing import Dict, Any
 
 # Backend URL from frontend/.env
-BASE_URL = "https://chatly-mobile.preview.emergentagent.com/api"
+BASE_URL = "https://chatly-mobile-1.preview.emergentagent.com/api"
 
 # Test credentials from test_credentials.md
 USER_A_EMAIL = "demo@chatly.app"

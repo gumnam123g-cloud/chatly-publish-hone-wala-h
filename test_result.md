@@ -309,6 +309,9 @@ messaging_ai_phase10:
         -working: true
         -agent: "testing"
         -comment: "FULLY TESTED AND WORKING (2/2 tests PASSED). Test 5.1: GET /api/auth/firebase-token without auth returned 401 (auth requirement working correctly). Test 5.2: GET /api/auth/firebase-token with Bearer token returned 200 {firebase_token:'eyJhbGciOiAiUlMyNTYiLCAidHlwIjogIkpXVCIsICJraWQiOi...', uid:'user_demo_chatly'}. firebase_token is non-empty string (JWT format), uid matches expected 'user_demo_chatly'. No security leaks detected (no Traceback, sk_, tvly, sk-emergent, ek_, MONGO_URL, JWT_SECRET, private_key in response). Firebase custom token generation working correctly for authenticated users."
+        -working: true
+        -agent: "testing"
+        -comment: "SMOKE TEST AFTER CREDENTIAL REPLACEMENT (20/20 tests PASSED) ✅. Verified: 1) GET /api/firebase/status returns 200 with ready=true, error=null, bucket=chatlyai-12478.firebasestorage.app ✓. 2) Demo login (demo@chatly.app) works and returns token ✓. 3) GET /api/auth/firebase-token returns 200 with non-empty firebase_token and uid=user_demo_chatly ✓. 4) Invalid Firebase ID token returns safe 401 (not 500) with no stack traces ✓. 5) Direct Admin SDK obtains Storage bucket handle (chatlyai-12478.firebasestorage.app) ✓. 6) Direct Admin SDK reads Firestore users/user_demo_chatly with correct user_id ✓. 7) GET /api/auth/me returns 200 ✓. 8) GET /api/chats returns 200 ✓. Security: NO secrets or stack traces exposed in any response (checked for Traceback, sk_, tvly, sk-emergent, ek_, MONGO_URL, JWT_SECRET, private_key, service_account) ✓. All Firebase Admin integration working correctly after credential replacement. No app data created/deleted/modified during testing (read-only smoke test)."
   - task: "Status made permanent (no 24h expiry) + FCM push on new message"
     implemented: true
     working: true
@@ -327,7 +330,7 @@ messaging_ai_phase10:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 7
+  test_sequence: 8
   run_ui: false
 
 test_plan:
@@ -883,7 +886,7 @@ agent_communication:
       
       ALL 7 TESTS PASSED (7/7) - NO FAILURES
       
-      Tested ALL NEW/CHANGED endpoints for Phase 10 at https://chatly-mobile.preview.emergentagent.com/api using credentials demo@chatly.app / Demo1234 and demo2@chatly.app / Demo1234.
+      Tested ALL NEW/CHANGED endpoints for Phase 10 at https://chatly-mobile-1.preview.emergentagent.com/api using credentials demo@chatly.app / Demo1234 and demo2@chatly.app / Demo1234.
       
       ✅ TEST 1: AI MESSAGE ACTIONS (4/4 PASS)
       • Translate Hinglish→English: 'Bhai kal report bhej dena please' → 'Bro, please send the report tomorrow.' (auto-detected source, correct translation)
@@ -1408,3 +1411,156 @@ historical_log:
       ✅ ICE servers configuration working (STUN + TURN with credentials)
       
       NO ISSUES FOUND. All call media and live transcription features working as designed.
+
+mobile_runtime_smoke:
+  - task: "Start backend and Expo mobile preview"
+    implemented: true
+    working: true
+    file: "backend/.env, frontend/.env"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      -working: true
+      -agent: "main"
+      -comment: "Restored the user-provided local runtime configuration after repository bootstrap, installed frontend dependencies, started supervisor services, verified GET /api/ returns 200, and confirmed the Expo web/mobile preview loads with title Chatly AI Messenger. Firebase Admin is optional but currently unavailable because the provided private key is invalid; core backend and Expo preview remain running."
+
+runtime_smoke_test_post_startup:
+  - task: "Backend process health verification"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      -working: true
+      -agent: "testing"
+      -comment: "RUNTIME SMOKE TEST COMPLETE - ALL 7 TESTS PASSED ✅. Backend process is RUNNING (supervisor status confirmed). No critical startup errors in logs. MongoDB connection healthy. Backend HTTP endpoint responding (200 OK). All core services initialized successfully (Object storage initialized, scheduled-messages dispatcher started). Known non-critical warning: Firebase Admin init failed with 'Invalid private key' - this is fail-soft and does not affect core functionality."
+  
+  - task: "Read-only authenticated endpoints verification"
+    implemented: true
+    working: true
+    file: "backend/auth.py, backend/chat_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      -working: true
+      -agent: "testing"
+      -comment: "COMPREHENSIVE READ-ONLY TESTING COMPLETE ✅. Test credentials: demo@chatly.app / Demo1234 (pre-verified account). POST /api/auth/login returns 200 with token and user object ✓. GET /api/auth/me returns 200 with user details (email: demo@chatly.app, name: Demo User, user_id: user_demo_chatly) ✓. GET /api/chats returns 200 with 3 chats in proper structure {chats: [...]} ✓. All responses have correct structure and contain expected data. No data was created, modified, or deleted during testing (read-only operations only)."
+  
+  - task: "Security and error handling verification"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      -working: true
+      -agent: "testing"
+      -comment: "SECURITY AUDIT COMPLETE - NO LEAKS DETECTED ✅. Tested all API responses for security leaks: NO stack traces (Traceback), NO API keys (sk_, tvly, sk-emergent, ek_), NO secrets (MONGO_URL, JWT_SECRET, private_key, service_account) found in any response ✓. Error handling verified: GET /api/nonexistent-endpoint returns clean 404 with no stack traces ✓. All error responses are user-safe and do not expose internal implementation details."
+
+agent_communication:
+  -agent: "main"
+  -message: "Runtime smoke check requested: backend and Expo are running; preview loads successfully. Please verify startup/auth/navigation only and report any runtime or console errors."
+  -agent: "testing"
+  -message: |
+    RUNTIME SMOKE TEST AFTER STARTUP RESTORATION - COMPLETE ✅
+    
+    Executed comprehensive smoke test focusing on backend health and read-only operations as requested.
+    
+    TEST RESULTS (7/7 PASSED):
+    ✅ Startup & Process Health: Backend RUNNING, MongoDB healthy, no critical errors
+    ✅ Backend HTTP Health: Responding correctly (200 OK)
+    ✅ Authentication: Login working with demo@chatly.app
+    ✅ GET /api/auth/me: Returns user details correctly
+    ✅ GET /api/chats: Returns 3 chats in proper structure
+    ✅ Error Handling: Clean 404 responses, no stack traces
+    ✅ Security Audit: NO leaks detected (no Traceback, API keys, secrets)
+    
+    CONFIGURATION STATUS:
+    ✅ Backend process: RUNNING (pid 1208)
+    ✅ MongoDB: RUNNING and connected
+    ✅ Object storage: Initialized successfully
+    ✅ Scheduled messages dispatcher: Started (15s tick)
+    ⚠️ Firebase Admin: Not initialized (Invalid private key) - FAIL-SOFT, core functionality unaffected
+    
+    NO STARTUP/IMPORT/CONFIGURATION FAILURES DETECTED.
+    Backend is healthy and runnable. All core features operational.
+    
+    Note: Only read-only operations tested as requested. No data created, modified, or deleted.
+  -agent: "main"
+  -message: "Firebase Admin credential replaced. Please run focused smoke test: verify GET /api/firebase/status (ready=true, error=null, correct bucket), demo login works, GET /api/auth/firebase-token returns non-empty token with uid user_demo_chatly, invalid Firebase ID token returns safe 401 (not 500), direct Admin SDK can obtain Storage bucket handle and read Firestore users/user_demo_chatly, no secrets/stack traces exposed, GET /api/auth/me and GET /api/chats still return 200. Report exact pass/fail counts. Do NOT do unrelated feature tests, do NOT create/delete/modify app data."
+  -agent: "testing"
+  -message: |
+    FIREBASE ADMIN INTEGRATION SMOKE TEST AFTER CREDENTIAL REPLACEMENT - COMPLETE ✅
+    
+    Executed focused Firebase Admin integration smoke test as requested. Read-only operations only, no app data created/deleted/modified.
+    
+    TEST RESULTS: 20/20 PASSED (100% SUCCESS RATE)
+    
+    ✅ Test 1: Firebase Status Endpoint (5/5 passed)
+       • GET /api/firebase/status returns 200
+       • Firebase status ready=true
+       • Firebase status error=null
+       • Firebase status bucket=chatlyai-12478.firebasestorage.app (correct)
+       • No secrets exposed in response
+    
+    ✅ Test 2: Demo Login (2/2 passed)
+       • Demo login (demo@chatly.app) returns 200
+       • Demo login returns valid token
+    
+    ✅ Test 3: Firebase Custom Token (4/4 passed)
+       • GET /api/auth/firebase-token returns 200
+       • Firebase custom token is non-empty
+       • Firebase token uid=user_demo_chatly (correct)
+       • No secrets exposed in response
+    
+    ✅ Test 4: Invalid Firebase ID Token (2/2 passed)
+       • Invalid Firebase ID token returns safe 401 (NOT 500)
+       • No stack traces or secrets exposed
+    
+    ✅ Test 5: Direct Admin SDK Access (3/3 passed)
+       • Admin SDK obtains Storage bucket chatlyai-12478.firebasestorage.app
+       • Admin SDK reads Firestore users/user_demo_chatly
+       • Firestore doc has correct user_id field
+    
+    ✅ Test 6: Auth Me Endpoint (2/2 passed)
+       • GET /api/auth/me returns 200
+       • No secrets exposed in response
+    
+    ✅ Test 7: Chats Endpoint (2/2 passed)
+       • GET /api/chats returns 200
+       • No secrets exposed in response
+    
+    SECURITY AUDIT: PASSED
+    • NO secrets or stack traces exposed in any response
+    • Checked for: Traceback, sk_, tvly, sk-emergent, ek_, MONGO_URL, JWT_SECRET, private_key, service_account
+    • All error responses are user-safe (401 returns "Invalid sign-in. Please try again.")
+    
+    EXACT COUNTS: 20 passed, 0 failed out of 20 tests
+    
+    Firebase Admin SDK is fully operational after credential replacement. All integration points working correctly.
+
+
+firebase_admin_private_key_fix:
+  - task: "Replace invalid Firebase Admin private key and verify live Admin connection"
+    implemented: true
+    working: true
+    file: "backend/firebase-admin.json"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      -working: true
+      -agent: "main"
+      -comment: "Replaced the invalid service-account private key with the corrected user-provided credential, verified cryptographic PEM parsing (RSA 2048), restarted backend, and confirmed GET /api/firebase/status returns ready=true, error=null. Live Admin SDK checks passed for custom-token minting, Storage bucket handle, and Firestore read. Login and chat regressions also passed. No Firebase mock was used in the smoke test."
+
+
+    status_history:
+      -working: true
+      -agent: "testing"
+      -comment: "Firebase Admin smoke test completed: 20 passed, 0 failed. Status ready=true/error=null, custom token minting, Storage bucket handle, Firestore read, invalid-token 401 handling, demo login, /auth/me, and /chats all passed. No secrets or stack traces exposed."
+
