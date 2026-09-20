@@ -5,17 +5,22 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
 import { useTheme } from "@/src/theme";
 
-// Order must match the visible bottom-tab order below.
-const TAB_ROUTES = ["/", "/chatly", "/status", "/calls", "/profile"];
+// Bottom-tab visual order is defined by the <Tabs.Screen> children below.
+// Swipe navigation is enabled ONLY between these four tabs, in this exact
+// cyclic order:
+//   Chats  -> Status  -> Chatly  -> Profile  -> Chats  (left swipe)
+//   reverse for right swipe.
+// The Calls tab is intentionally excluded from swipe navigation, but the user
+// can still reach Calls by tapping the bottom-tab icon.
+const SWIPE_ORDER = ["/", "/status", "/chatly", "/profile"];
 
 export default function TabsLayout() {
   const { colors } = useTheme();
   const router = useRouter();
   const pathname = usePathname();
 
-  const goToIndex = (i: number) => {
-    if (i < 0 || i >= TAB_ROUTES.length) return;
-    router.navigate(TAB_ROUTES[i] as any);
+  const goToRoute = (route: string) => {
+    router.navigate(route as any);
   };
 
   // Horizontal-only pan: activeOffsetX makes it trigger on clear horizontal drags,
@@ -25,12 +30,18 @@ export default function TabsLayout() {
     .failOffsetY([-16, 16])
     .onEnd((e) => {
       "worklet";
-      const idx = TAB_ROUTES.indexOf(pathname === "" ? "/" : pathname);
-      const cur = idx < 0 ? 0 : idx;
+      const current = pathname === "" ? "/" : pathname;
+      const idx = SWIPE_ORDER.indexOf(current);
+      // If the user is on a tab outside the swipe cycle (e.g. /calls), do not
+      // hijack their gesture at all.
+      if (idx < 0) return;
+      const n = SWIPE_ORDER.length;
       if (e.translationX <= -60 && Math.abs(e.velocityX) > 120) {
-        runOnJS(goToIndex)(cur + 1);
+        // Left swipe: advance forward through the cycle (wraps to start).
+        runOnJS(goToRoute)(SWIPE_ORDER[(idx + 1) % n]);
       } else if (e.translationX >= 60 && Math.abs(e.velocityX) > 120) {
-        runOnJS(goToIndex)(cur - 1);
+        // Right swipe: step backward through the cycle (wraps to end).
+        runOnJS(goToRoute)(SWIPE_ORDER[(idx - 1 + n) % n]);
       }
     });
 
