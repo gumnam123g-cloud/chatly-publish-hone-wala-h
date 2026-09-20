@@ -61,6 +61,17 @@ export default function RootLayout() {
     return () => clearTimeout(t);
   }, []);
 
+  // Apply the user's Privacy Screen preference on every cold-start (Android
+  // FLAG_SECURE / iOS screen-capture prevention). No-op if not enabled.
+  useEffect(() => {
+    (async () => {
+      try {
+        const mod = await import("@/app/privacy-screen");
+        await mod.applyPrivacyScreen?.();
+      } catch {}
+    })();
+  }, []);
+
   if (!loaded && !error) return null;
 
   return (

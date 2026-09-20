@@ -1,6 +1,7 @@
 import { storage } from "@/src/utils/storage";
 
 const BASE = (process.env.EXPO_PUBLIC_BACKEND_URL || "") + "/api";
+export const API_ORIGIN = (process.env.EXPO_PUBLIC_BACKEND_URL || "");
 export const TOKEN_KEY = "chatly_token";
 
 /** Default request timeout. Generous because some AI/research calls are slow

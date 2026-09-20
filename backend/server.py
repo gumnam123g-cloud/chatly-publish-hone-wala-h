@@ -25,6 +25,7 @@ import templates_routes
 import insights_routes
 import push_routes
 import smart_features_routes
+import phase2_routes
 from storage_service import init_storage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -73,6 +74,7 @@ app.include_router(templates_routes.router)
 app.include_router(insights_routes.router)
 app.include_router(push_routes.router)
 app.include_router(smart_features_routes.router)
+app.include_router(phase2_routes.router)
 
 
 @app.websocket("/api/ws")

@@ -52,6 +52,8 @@ export default function GroupInfo() {
 
         <Button testID="group-brain-button" title="Ask Group Brain" icon="sparkles" onPress={() => router.push({ pathname: "/chat/[id]", params: { id: String(id), name: group.name, group: "1" } })} />
         <Button testID="group-assistant-button" title="Group Assistant & Polls" icon="checkmark-done-outline" variant="secondary" onPress={() => router.push({ pathname: "/group-assistant/[id]", params: { id: String(id), name: group.name } })} />
+        <Button testID="group-tasks-button" title="Group Tasks" icon="checkbox-outline" variant="secondary" onPress={() => router.push({ pathname: "/group-tasks/[id]", params: { id: String(id), name: group.name } })} />
+        <Button testID="meeting-planner-button" title="Meeting Planner" icon="calendar-outline" variant="secondary" onPress={() => router.push({ pathname: "/meeting-planner/[id]", params: { id: String(id), name: group.name } })} />
 
         <View>
           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
